@@ -4,6 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes, viewport-fit=cover" />
   <title>School Management System</title>
+  <link id="app-favicon" rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 64 64%22%3E%3Ccircle cx=%2232%22 cy=%2232%22 r=%2230%22 fill=%22%23059669%22/%3E%3Cpath d=%22M20 24h24v18a4 4 0 0 1-4 4H24a4 4 0 0 1-4-4V24Z%22 fill=%22white%22/%3E%3Cpath d=%22M18 24 32 16l14 8%22 fill=%22none%22 stroke=%22white%22 stroke-width=%224%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22/%3E%3Cpath d=%22M28 31h8v15h-8z%22 fill=%22%23059669%22/%3E%3C/svg%3E" />
+  <link id="app-shortcut-icon" rel="shortcut icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 64 64%22%3E%3Ccircle cx=%2232%22 cy=%2232%22 r=%2230%22 fill=%22%23059669%22/%3E%3Cpath d=%22M20 24h24v18a4 4 0 0 1-4 4H24a4 4 0 0 1-4-4V24Z%22 fill=%22white%22/%3E%3Cpath d=%22M18 24 32 16l14 8%22 fill=%22none%22 stroke=%22white%22 stroke-width=%224%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22/%3E%3Cpath d=%22M28 31h8v15h-8z%22 fill=%22%23059669%22/%3E%3C/svg%3E" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -175,6 +177,18 @@ function applyTheme(themeKey='emerald') {
   root.style.setProperty('--theme-header-bg', theme.headerBg);
   root.style.setProperty('--theme-card-bg', theme.cardBg);
   root.style.setProperty('--theme-text-strong', theme.textStrong);
+}
+function updateBrowserBranding(schoolSettings={}) {
+  try {
+    const titleBase = schoolSettings?.school_name?.trim() || 'School Management System';
+    document.title = titleBase;
+    const fallbackIcon = 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 64 64%22%3E%3Ccircle cx=%2232%22 cy=%2232%22 r=%2230%22 fill=%22%23059669%22/%3E%3Cpath d=%22M20 24h24v18a4 4 0 0 1-4 4H24a4 4 0 0 1-4-4V24Z%22 fill=%22white%22/%3E%3Cpath d=%22M18 24 32 16l14 8%22 fill=%22none%22 stroke=%22white%22 stroke-width=%224%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22/%3E%3Cpath d=%22M28 31h8v15h-8z%22 fill=%22%23059669%22/%3E%3C/svg%3E';
+    const iconHref = schoolSettings?.logo_url || fallbackIcon;
+    const favicon = document.getElementById('app-favicon');
+    const shortcut = document.getElementById('app-shortcut-icon');
+    if (favicon) favicon.href = iconHref;
+    if (shortcut) shortcut.href = iconHref;
+  } catch (e) {}
 }
 function statusClass(status) {
   const k = String(status || '').toLowerCase();
@@ -868,6 +882,7 @@ function Field({ label, children }) { return <div>{label !== '' && <label classN
 function Table({ columns, rows, renderCell }) { return <div className="card p-4 table-wrap"><table className="min-w-full text-sm"><thead><tr className="border-b">{columns.map(c => <th key={c} className="text-left py-3 px-2 font-semibold">{c}</th>)}</tr></thead><tbody>{rows.length === 0 ? <tr><td colSpan={columns.length} className="py-6 px-2 text-center text-slate-500">No records found.</td></tr> : rows.map((row, idx) => <tr key={row.id || idx} className="border-b last:border-b-0">{columns.map(c => <td key={c} className="py-3 px-2 align-top">{renderCell(row, c)}</td>)}</tr>)}</tbody></table></div>; }
 function ToastStack({ notifications, onDismiss }) { return <div className="toast-stack no-print">{notifications.map(note => <div key={note.id} className={`toast toast-${note.type || "info"}`}><div className="flex items-start justify-between gap-3"><div className="text-sm font-medium">{note.message}</div><button onClick={() => onDismiss(note.id)} className="text-slate-400 hover:text-slate-700"><i className="fas fa-times"></i></button></div></div>)}</div>; }
 function BusyOverlay({ text }) { if (!text) return null; return <div className="busy-backdrop no-print"><div className="busy-card"><div className="spinner"></div><div className="text-sm font-semibold text-slate-700">{text}</div></div></div>; }
+function AppFooter() { return <footer className="px-4 md:px-6 py-6 text-center text-xs md:text-sm text-slate-500"><span>© 2026 Wood World Missions Int'l School. All rights reserved.</span></footer>; }
 
 function linkedEntityName(data, role, linkedId) {
   const collection = role === 'teacher' ? data.teachers : role === 'student' ? data.students : role === 'parent' ? data.parents : role === 'accountant' ? data.accountStaff : role === 'principal' ? data.principals : [];
@@ -922,7 +937,8 @@ function App() {
     const nextTheme = normalizeThemeChoice(store.data.schoolSettings?.theme_choice || localStorage.getItem(THEME_STORAGE_KEY) || 'emerald');
     if (nextTheme !== themeChoice) setThemeChoiceState(nextTheme);
     else applyTheme(nextTheme);
-  }, [store.loaded, store.data.schoolSettings?.theme_choice]);
+    updateBrowserBranding(store.data.schoolSettings || {});
+  }, [store.loaded, store.data.schoolSettings]);
 
   React.useEffect(() => {
     if (!authReady || !store.loaded) return;
