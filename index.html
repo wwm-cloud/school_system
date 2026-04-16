@@ -99,7 +99,7 @@ const THEME_OPTIONS = {
 const THEME_STORAGE_KEY = 'school_system_theme_choice';
 function normalizeThemeChoice(value) { return THEME_OPTIONS[value] ? value : 'emerald'; }
 
-const defaultSchool = { school_name: 'Wood-World Missions Int. School', address: '', contact: '', location: '', logo_url: '', theme_choice: 'emerald' };
+const defaultSchool = { school_name: 'WOOD WORLD MISSION INT'L SCHOOL', address: '', contact: '', location: '', logo_url: '', theme_choice: 'emerald' };
 const uid = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
 const today = () => new Date().toISOString().slice(0,10);
 const safeArray = v => Array.isArray(v) ? v : [];
