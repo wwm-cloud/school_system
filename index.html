@@ -191,6 +191,148 @@ function calcGradeRecord(g) {
   const res = beceGrade(total);
   return { total_score: total, grade_letter: res.grade, interpretation: res.interpretation };
 }
+
+function formatReportTerm(term, year) {
+  return [term, year].filter(Boolean).join(' ');
+}
+function buildStudentGradeReportHtml({ school, student, classLabel, term, year, rows, attendanceRows }) {
+  const totalScore = rows.reduce((sum, row) => sum + Number(row.total_score || 0), 0);
+  const avgScore = rows.length ? (totalScore / rows.length).toFixed(1) : '0.0';
+  const attendanceActual = attendanceRows.filter(a => String(a.status || '').toLowerCase() === 'present').length;
+  const attendanceExpected = attendanceRows.length;
+  const attendancePercent = attendanceExpected ? Math.round((attendanceActual / attendanceExpected) * 100) : 0;
+  const logoHtml = school.logo_url ? `<img src="${school.logo_url}" style="width:74px;height:74px;object-fit:cover;border-radius:50%;border:3px solid #0f766e;" />` : `<div style="width:74px;height:74px;border-radius:50%;background:#ccfbf1;border:3px solid #0f766e;display:flex;align-items:center;justify-content:center;font-weight:800;color:#115e59;">SMS</div>`;
+  const rowsHtml = rows.map(row => {
+    const subjectName = row.subject_name || '';
+    return `<tr>
+      <td>${subjectName}</td>
+      <td>${row.mid_exam_50 ?? ''}</td>
+      <td>${row.end_exam_50 ?? ''}</td>
+      <td>${row.total_score ?? ''}</td>
+      <td>${row.grade_letter ?? ''}</td>
+      <td>${row.interpretation ?? ''}</td>
+      <td>${row.position ?? ''}</td>
+      <td>${row.teacher_initial ?? ''}</td>
+    </tr>`;
+  }).join('');
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Student Grade Report</title>
+<style>
+  * { box-sizing: border-box; font-family: Arial, sans-serif; }
+  body { margin: 0; background: #f3f4f6; color: #111827; }
+  .page { width: 210mm; min-height: 297mm; margin: 0 auto; background: white; padding: 14mm 12mm; }
+  .head { border: 3px solid #0f766e; border-radius: 20px; padding: 14px 18px; background: linear-gradient(135deg,#ecfeff,#f0fdf4); }
+  .head-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .school-center { flex: 1; text-align: center; }
+  .school-name { font-size: 28px; font-weight: 900; color: #115e59; letter-spacing: .6px; }
+  .school-sub { font-size: 14px; font-weight: 700; color: #334155; margin-top: 4px; }
+  .title { margin-top: 16px; text-align: center; font-size: 22px; font-weight: 900; color: #1e3a8a; text-transform: uppercase; text-decoration: underline; }
+  .meta { margin-top: 18px; display: grid; grid-template-columns: 1fr 1fr; gap: 12px 26px; font-size: 14px; }
+  .meta div { padding-bottom: 6px; border-bottom: 1px dashed #94a3b8; }
+  .meta strong { color: #0f172a; }
+  .section-title { margin: 22px 0 10px; text-align: center; font-size: 18px; font-weight: 900; color: #7c2d12; letter-spacing: 2px; text-transform: uppercase; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { border: 1px solid #64748b; padding: 8px 7px; font-size: 13px; text-align: center; }
+  th { background: #dbeafe; color: #1e3a8a; font-weight: 800; }
+  tbody tr:nth-child(even) { background: #f8fafc; }
+  .summary { margin-top: 14px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+  .sum-card { border: 1px solid #cbd5e1; border-radius: 14px; padding: 10px; background: #f8fafc; text-align: center; }
+  .sum-card b { display: block; font-size: 13px; color: #475569; margin-bottom: 6px; }
+  .sum-card span { font-size: 20px; font-weight: 900; color: #0f766e; }
+  .remarks { margin-top: 18px; display: grid; gap: 12px; }
+  .remarks .box { min-height: 64px; border: 1px dashed #94a3b8; border-radius: 12px; padding: 10px 12px; }
+  .remarks .label { font-weight: 800; color: #1e293b; margin-bottom: 6px; }
+  .foot { margin-top: 18px; display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  .sign { padding-top: 28px; border-bottom: 1px solid #334155; text-align: center; font-weight: 700; }
+  .note { margin-top: 16px; text-align: center; font-size: 12px; color: #7f1d1d; font-weight: 700; }
+  @media print { body { background: white; } .page { width: auto; min-height: auto; padding: 8mm; } }
+</style>
+</head>
+<body>
+  <div class="page">
+    <div class="head">
+      <div class="head-top">
+        ${logoHtml}
+        <div class="school-center">
+          <div class="school-name">${school.school_name || 'School Management System'}</div>
+          <div class="school-sub">${[school.address, school.location].filter(Boolean).join(' • ') || 'Student End of Semester Report'}</div>
+          <div class="school-sub">${school.contact || ''}</div>
+        </div>
+        ${logoHtml}
+      </div>
+      <div class="title">Student's End of Semester Report</div>
+      <div class="meta">
+        <div><strong>Name:</strong> ${student.full_name || ''}</div>
+        <div><strong>Academic Year:</strong> ${year || ''}</div>
+        <div><strong>Index Number:</strong> ${student.student_number || ''}</div>
+        <div><strong>Semester:</strong> ${term || ''}</div>
+        <div><strong>Form / Level:</strong> ${classLabel || ''}</div>
+        <div><strong>Promoted Class:</strong> ____________________</div>
+      </div>
+    </div>
+
+    <div class="section-title">Statement of Results</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Subject Name</th>
+          <th>Mid Semester</th>
+          <th>End of Semester</th>
+          <th>Total Score</th>
+          <th>Grade</th>
+          <th>Interpretation</th>
+          <th>Position</th>
+          <th>Teacher Initial</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rowsHtml || `<tr><td colspan="8">No grades available.</td></tr>`}
+      </tbody>
+    </table>
+
+    <div class="summary">
+      <div class="sum-card"><b>Subjects</b><span>${rows.length}</span></div>
+      <div class="sum-card"><b>Total Score</b><span>${totalScore}</span></div>
+      <div class="sum-card"><b>Average</b><span>${avgScore}</span></div>
+      <div class="sum-card"><b>Attendance %</b><span>${attendancePercent}%</span></div>
+    </div>
+
+    <div class="remarks">
+      <div class="box"><div class="label">Attendance Summary</div>Expected: ${attendanceExpected} &nbsp;&nbsp; Actual: ${attendanceActual} &nbsp;&nbsp; Percentage: ${attendancePercent}%</div>
+      <div class="box"><div class="label">Form Master's Remarks</div></div>
+      <div class="box"><div class="label">Headmaster's Remarks</div></div>
+    </div>
+
+    <div class="foot">
+      <div>
+        <div class="sign"></div>
+        <div style="text-align:center;margin-top:6px;font-size:13px;">Form Master / Class Teacher</div>
+      </div>
+      <div>
+        <div class="sign"></div>
+        <div style="text-align:center;margin-top:6px;font-size:13px;">Headmaster</div>
+      </div>
+    </div>
+
+    <div class="note">NOTE: Any alteration, cancellation, or erasing of any part of this report renders it void or invalid.</div>
+  </div>
+</body>
+</html>`;
+}
+function openStudentGradeReportPrint(payload) {
+  const html = buildStudentGradeReportHtml(payload);
+  const win = window.open('', '_blank', 'width=1100,height=900');
+  if (!win) return;
+  win.document.open();
+  win.document.write(html);
+  win.document.close();
+  win.focus();
+  setTimeout(() => { try { win.print(); } catch (e) {} }, 450);
+}
 function useAudioNotifications() {
   const ctxRef = React.useRef(null);
   const beep = React.useCallback((freq = 880, duration = 0.12) => {
@@ -1049,8 +1191,26 @@ function StudentDashboard({ activeNav }) {
 }
 
 function StudentGrades({ student }) {
-  const { data } = React.useContext(DataContext); const [term, setTerm] = React.useState(''); const [year, setYear] = React.useState(''); const rows = data.grades.filter(g => g.student_id === student.id && (!term || g.term === term) && (!year || g.academic_year === year));
-  return <div className="space-y-4"><SectionHeader title="Grades" actions={<><Field label=""><select className="select" value={term} onChange={e => setTerm(e.target.value)}><option value="">All terms</option>{TERMS.map(x => <option key={x}>{x}</option>)}</select></Field><Field label=""><input className="input" placeholder="Academic year" value={year} onChange={e => setYear(e.target.value)} /></Field></>} /><Table columns={['Student','Class','Subject','Term','Mid Semester Exams A (50)','End of Semester Exams B (50)','Total A+B%','Grade','Interpretation','Position','Teacher Initial','Status']} rows={rows} renderCell={(row,c) => { if (c === 'Student') return student.full_name; if (c === 'Class') return fullClassName(data.classes.find(x => x.id === row.class_id)); if (c === 'Subject') return data.subjects.find(x => x.id === row.subject_id)?.name || ''; if (c === 'Term') return row.term; if (c === 'Mid Semester Exams A (50)') return row.mid_exam_50; if (c === 'End of Semester Exams B (50)') return row.end_exam_50; if (c === 'Total A+B%') return row.total_score; if (c === 'Grade') return row.grade_letter; if (c === 'Interpretation') return row.interpretation; if (c === 'Position') return row.position; if (c === 'Teacher Initial') return row.teacher_initial; if (c === 'Status') return <span className={`pill ${row.locked ? 'absent' : 'online'}`}>{row.locked ? 'Locked' : 'Published'}</span>; }} /></div>;
+  const { data } = React.useContext(DataContext);
+  const [term, setTerm] = React.useState('');
+  const [year, setYear] = React.useState('');
+  const allRows = data.grades.filter(g => g.student_id === student.id);
+  const rows = allRows.filter(g => (!term || g.term === term) && (!year || g.academic_year === year));
+  const hasLockedGrades = allRows.some(g => g.locked);
+  const attendanceRows = data.attendance.filter(a => a.student_id === student.id);
+  const printReport = () => {
+    if (hasLockedGrades || !rows.length) return;
+    openStudentGradeReportPrint({
+      school: data.schoolSettings,
+      student,
+      classLabel: fullClassName(data.classes.find(x => x.id === student.class_id)),
+      term: term || rows[0]?.term || '',
+      year: year || rows[0]?.academic_year || '',
+      attendanceRows,
+      rows: rows.map(row => ({ ...row, subject_name: data.subjects.find(x => x.id === row.subject_id)?.name || '' }))
+    });
+  };
+  return <div className="space-y-4"><SectionHeader title="Grades" subtitle={hasLockedGrades ? 'Grades are currently locked. Please contact the Accounts Office for clarification.' : 'View and print the student end of semester report.'} actions={<><Field label=""><select className="select" value={term} onChange={e => setTerm(e.target.value)}><option value="">All terms</option>{TERMS.map(x => <option key={x}>{x}</option>)}</select></Field><Field label=""><input className="input" placeholder="Academic year" value={year} onChange={e => setYear(e.target.value)} /></Field>{!hasLockedGrades && <button className="btn btn-outline" onClick={printReport}><i className="fas fa-print mr-2"></i>Print Grade Report</button>}</>} />{hasLockedGrades ? <div className="card p-6 border border-amber-200 bg-amber-50 text-amber-900"><div className="text-lg font-bold mb-2">Grade Report Notice</div><p>This student's grade report is currently locked. Please contact the Accounts Office for clarification before grades can be viewed or printed.</p></div> : <Table columns={['Student','Class','Subject','Term','Mid Semester Exams A (50)','End of Semester Exams B (50)','Total A+B%','Grade','Interpretation','Position','Teacher Initial','Status']} rows={rows} renderCell={(row,c) => { if (c === 'Student') return student.full_name; if (c === 'Class') return fullClassName(data.classes.find(x => x.id === row.class_id)); if (c === 'Subject') return data.subjects.find(x => x.id === row.subject_id)?.name || ''; if (c === 'Term') return row.term; if (c === 'Mid Semester Exams A (50)') return row.mid_exam_50; if (c === 'End of Semester Exams B (50)') return row.end_exam_50; if (c === 'Total A+B%') return row.total_score; if (c === 'Grade') return row.grade_letter; if (c === 'Interpretation') return row.interpretation; if (c === 'Position') return row.position; if (c === 'Teacher Initial') return row.teacher_initial; if (c === 'Status') return <span className={`pill ${row.locked ? 'absent' : 'online'}`}>{row.locked ? 'Locked' : 'Published'}</span>; }} />}</div>;
 }
 
 function StudentAttendance({ student }) {
