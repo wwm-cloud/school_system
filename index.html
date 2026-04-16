@@ -974,6 +974,24 @@ function usePersistentSchoolData() {
     };
   }, [flushPendingChanges, reloadData]);
 
+  React.useEffect(() => {
+    if (!loaded || !supabase || !offlineState.isOnline || !offlineState.pendingCount || offlineState.syncing) return;
+    const timer = window.setTimeout(() => { flushPendingChanges(); }, 900);
+    return () => window.clearTimeout(timer);
+  }, [loaded, offlineState.isOnline, offlineState.pendingCount, offlineState.syncing, flushPendingChanges]);
+
+  React.useEffect(() => {
+    if (!loaded || !supabase) return;
+    const intervalId = window.setInterval(async () => {
+      if (!browserOnline()) return;
+      const queue = await readOfflineQueue();
+      if (!queue.length) return;
+      setOfflineState(prev => ({ ...prev, isOnline: true, pendingCount: queue.length }));
+      await flushPendingChanges();
+    }, 5000);
+    return () => window.clearInterval(intervalId);
+  }, [loaded, flushPendingChanges]);
+
   const persist = React.useCallback(async next => {
     setData(next);
     await saveSnapshot(next);
