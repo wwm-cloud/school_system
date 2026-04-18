@@ -502,7 +502,7 @@ async function ensureBackendAdminCredential(credentialsRaw=[]) {
   if (!supabase) return [normalizeAdminCredential(DEFAULT_ADMIN_CREDENTIAL), ...rows];
   const adminInsert = {
     role: 'admin',
-    linked_entity_id: null,
+    linked_entity_id: ADMIN_LINKED_ENTITY_ID,
     username: DEFAULT_ADMIN_CREDENTIAL.username,
     temporary_password: DEFAULT_ADMIN_CREDENTIAL.temporary_password,
     force_password_change: false,
