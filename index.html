@@ -477,6 +477,14 @@ const emptyAttendance = { id: '', class_id: '', student_id: '', status: 'Present
 const emptyGrade = { id: '', class_id: '', student_id: '', subject_id: '', term: 'Term 1', academic_year: new Date().getFullYear().toString(), mid_exam_50: '', end_exam_50: '' };
 const emptyTimetable = { id: '', class_id: '', day_of_week: 'Monday', period_time: '', subject_id: '', teacher_id: '' };
 const emptyCredential = { id: '', role: 'teacher', linked_entity_id: '', force_password_change: 'Yes', account_active: true, username: '', temporary_password: '' };
+const DEFAULT_ADMIN_CREDENTIAL = { id: 'system-admin-credential', role: 'admin', linked_entity_id: 'system-admin', force_password_change: 'No', account_active: true, username: 'admin', temporary_password: 'admin12345', is_system_default: true };
+function ensureAdminCredential(items=[]) {
+  const list = safeArray(items).map(item => ({ ...item }));
+  const existingAdmin = list.find(item => item?.role === 'admin');
+  if (existingAdmin) return list;
+  return [clonePlain(DEFAULT_ADMIN_CREDENTIAL), ...list];
+}
+
 
 function seedData() {
   const classA = { id: 'cls1', name: 'JHS 1', section: 'A' };
@@ -494,7 +502,7 @@ function seedData() {
     { id: 'att1', class_id: 'cls1', student_id: 'stu1', teacher_id: 't1', date: today(), status: 'Present', remarks: 'On time' },
     { id: 'att2', class_id: 'cls1', student_id: 'stu2', teacher_id: 't1', date: today(), status: 'Absent', remarks: 'Sick' }
   ];
-  const grade = { id: 'g1', class_id: 'cls1', student_id: 'stu1', teacher_id: 't1', subject_id: 'sub1', term: 'Term 1', academic_year: '2026', mid_exam_50: 39, end_exam_50: 42, teacher_initial: 'KM', locked: false, published: false, ...calcGradeRecord({ mid_exam_50: 39, end_exam_50: 42 }), position: 1 };
+  const grade = { id: 'g1', class_id: 'cls1', student_id: 'stu1', teacher_id: 't1', subject_id: 'sub1', term: 'Term 1', academic_year: '2026', mid_exam_50: 39, end_exam_50: 42, teacher_initial: 'KM', locked: false, ...calcGradeRecord({ mid_exam_50: 39, end_exam_50: 42 }), position: 1 };
   const fee = { id: 'f1', student_id: 'stu1', class_id: 'cls1', academic_year: '2026', term: 'Term 1', amount_due: 500, amount_paid: 300, balance: 200, payment_method: 'Cash', status: 'Partial', recorded_by: 'acc1' };
   const timetable = [
     { id: 'tt1', class_id: 'cls1', day_of_week: 'Monday', period_time: '8:00 AM - 9:00 AM', subject_id: 'sub1', teacher_id: 't1' },
@@ -505,7 +513,8 @@ function seedData() {
     { id: 'cred2', role: 'student', linked_entity_id: 'stu1', username: 'abena.asare.stu131', temporary_password: 'temp12345', force_password_change: 'Yes', account_active: true },
     { id: 'cred3', role: 'parent', linked_entity_id: 'par1', username: 'martha.asare.par201', temporary_password: 'temp12345', force_password_change: 'Yes', account_active: true },
     { id: 'cred4', role: 'principal', linked_entity_id: 'pri1', username: 'ama.owusu.pri120', temporary_password: 'temp12345', force_password_change: 'No', account_active: true },
-    { id: 'cred5', role: 'accountant', linked_entity_id: 'acc1', username: 'michael.tetteh.acc115', temporary_password: 'temp12345', force_password_change: 'No', account_active: true }
+    { id: 'cred5', role: 'accountant', linked_entity_id: 'acc1', username: 'michael.tetteh.acc115', temporary_password: 'temp12345', force_password_change: 'No', account_active: true },
+    { ...DEFAULT_ADMIN_CREDENTIAL }
   ];
   const chats = [
     { id: 'c1', sender_role: 'teacher', sender_id: 't1', receiver_role: 'principal', receiver_id: 'pri1', message: 'Attendance has been submitted for JHS 1A.', created_at: new Date().toISOString(), is_read: true, deleted_by_sender: false, deleted_by_receiver: false, banned: false }
@@ -522,16 +531,6 @@ const DB_KEY = 'school_management_complete_dataset';
 const LIGHT_OFFLINE_CACHE_KEY = 'school_management_light_cache_v1';
 const LIGHT_OFFLINE_QUEUE_KEY = 'school_management_light_queue_v1';
 const LIGHT_OFFLINE_META_KEY = 'school_management_light_meta_v1';
-const GRADE_PUBLISH_STORAGE_KEY = 'school_management_grade_publish_state_v1';
-async function readGradePublishMap() {
-  try { return (await offlineStore.getItem(GRADE_PUBLISH_STORAGE_KEY)) || {}; } catch (e) { return {}; }
-}
-async function writeGradePublishMap(map) {
-  try { await offlineStore.setItem(GRADE_PUBLISH_STORAGE_KEY, map || {}); } catch (e) {}
-}
-function applyGradePublishState(grades = [], publishMap = {}) {
-  return safeArray(grades).map(row => ({ ...row, published: Object.prototype.hasOwnProperty.call(publishMap, row.id) ? !!publishMap[row.id] : !!row.published }));
-}
 function clonePlain(value) {
   try { return JSON.parse(JSON.stringify(value)); } catch (e) { return value; }
 }
@@ -625,7 +624,6 @@ async function fetchTable(table) {
 async function fetchAllSchoolData() {
   if (!supabase) return seedData();
   await ensureSupabaseBrowserSession();
-  const publishMap = await readGradePublishMap();
   const [schoolSettingsRes, profiles, principalsRaw, accountStaffRaw, teachersRaw, studentsRaw, parentsRaw, parentLinksRaw, classAssignmentsRaw, subjectAssignmentsRaw, classes, subjects, timetableRaw, attendanceRaw, gradesRaw, feesRaw, credentialsRaw, chatsRaw, presenceRaw] = await Promise.all([
     supabase.from('school_settings').select('*').eq('id', 1).single(),
     fetchTable('profiles'),
@@ -683,9 +681,9 @@ async function fetchAllSchoolData() {
     subjects: subjects || [],
     timetable: timetableRaw || [],
     attendance: (attendanceRaw || []).map(row => ({ ...row, date: row.attendance_date })),
-    grades: applyGradePublishState(gradesRaw || [], publishMap),
+    grades: gradesRaw || [],
     fees: feesRaw || [],
-    credentials: (credentialsRaw || []).map(row => ({ ...row, force_password_change: toYesNo(row.force_password_change) })),
+    credentials: ensureAdminCredential((credentialsRaw || []).map(row => ({ ...row, force_password_change: toYesNo(row.force_password_change) }))),
     chats: chatsRaw || [],
     presenceRows: presenceRaw || [],
     presence: withPresenceRows(presenceRaw || [])
@@ -1037,7 +1035,7 @@ function usePersistentSchoolData() {
   const updateCollection = React.useCallback(async (key, updater, options={}) => {
     const prevItems = clonePlain(data[key] || []);
     const nextItems = clonePlain(typeof updater === 'function' ? updater(prevItems) : updater);
-    const { silentSuccess=false, suppressBusy=false, offlineNotice=true, optimistic=false } = options || {};
+    const { silentSuccess=false, suppressBusy=false, offlineNotice=true, optimistic=false, successMessage='', offlineSuccessMessage='' } = options || {};
     const nextData = { ...data, [key]: nextItems };
     try {
       if (!suppressBusy) setBusyText(browserOnline() ? `Saving ${key}...` : `Saving ${key} locally...`);
@@ -1051,8 +1049,8 @@ function usePersistentSchoolData() {
         await writeOfflineCache(nextData, { pendingCount, lastSyncAt: offlineState.lastSyncAt || '' });
         setOfflineState(prev => ({ ...prev, isOnline: browserOnline(), hasCache: true, pendingCount, lastSyncAt: prev.lastSyncAt }));
         if (!silentSuccess) {
-          if (supabase && offlineNotice) notify('info', `${key} saved locally and queued for sync.`);
-          else if (!supabase) notify('success', `${key} updated.`);
+          if (supabase && offlineNotice) notify('info', offlineSuccessMessage || `${key} saved locally and queued for sync.`);
+          else if (!supabase) notify('success', offlineSuccessMessage || successMessage || `${key} updated.`);
         }
         return;
       }
@@ -1065,7 +1063,7 @@ function usePersistentSchoolData() {
         setOfflineState(prev => ({ ...prev, isOnline: true, hasCache: true, lastSyncAt: nowIso }));
         reloadData({ silent: true }).catch(() => {});
       }
-      if (!silentSuccess) notify('success', `${key} saved successfully.`);
+      if (!silentSuccess) notify('success', successMessage || `${key} saved successfully.`);
     } catch (error) {
       if (optimistic) {
         const rollbackData = { ...data, [key]: prevItems };
@@ -1079,14 +1077,6 @@ function usePersistentSchoolData() {
       if (!suppressBusy) setBusyText('');
     }
   }, [data, offlineState.pendingCount, offlineState.lastSyncAt, notify, reloadData, syncCollectionByKey]);
-
-  React.useEffect(() => {
-    const savePublishState = async () => {
-      const publishMap = Object.fromEntries(safeArray(data.grades).filter(row => row?.id).map(row => [row.id, !!row.published]));
-      await writeGradePublishMap(publishMap);
-    };
-    savePublishState();
-  }, [data.grades]);
 
   const setPresenceStatus = React.useCallback(async (role, linkedId, isOnline) => {
     const nextPresenceRows = (() => {
@@ -1210,14 +1200,15 @@ function App() {
     if (!authReady || !store.loaded) return;
     const saved = loadAppUserSession();
     if (!saved?.credentialId) return;
-    const credential = store.data.credentials.find(c => c.id === saved.credentialId && c.account_active);
+    const credential = store.data.credentials.find(c => c.id === saved.credentialId && c.account_active) || (saved?.role === 'admin' ? ensureAdminCredential(store.data.credentials).find(c => c.role === 'admin' && c.account_active) : null);
     if (!credential) { clearAppUserSession(); return; }
     setSession({ role: credential.role, linkedId: credential.linked_entity_id, credentialId: credential.id, username: credential.username });
     if (credential.force_password_change === 'Yes') setForcePasswordModal(true);
   }, [authReady, store.loaded, store.data.credentials]);
 
   const loginWithCredentials = React.useCallback(async (username, password) => {
-    const credential = store.data.credentials.find(c => (c.username || '').trim().toLowerCase() === String(username || '').trim().toLowerCase() && c.account_active);
+    const searchUsername = String(username || '').trim().toLowerCase();
+    const credential = ensureAdminCredential(store.data.credentials).find(c => (c.username || '').trim().toLowerCase() === searchUsername && c.account_active);
     if (!credential) throw new Error('Invalid username or password.');
     if ((credential.temporary_password || '') !== String(password || '')) throw new Error('Invalid username or password.');
     await store.setPresenceStatus(credential.role, credential.linked_entity_id, true);
@@ -1491,12 +1482,27 @@ function TimetableManagement({ adminMode=false, teacherId=null, classId=null }) 
 }
 
 function UserCredentialsManagement() {
-  const { data, updateCollection } = React.useContext(DataContext); const [open, setOpen] = React.useState(false); const [form, setForm] = React.useState(emptyCredential);
-  const save = async e => { e.preventDefault(); const collection = availableLinkedRecords(data, form.role); const linked = collection.find(x => x.id === form.linked_entity_id); const payload = { ...form, id: form.id || uid(), username: form.username || generateUsername(linked?.full_name || ROLE_LABELS[form.role], form.role), temporary_password: form.temporary_password || generatePassword() }; await updateCollection('credentials', items => items.some(x => x.id === payload.id) ? items.map(x => x.id === payload.id ? payload : x) : [...items, payload]); setOpen(false); setForm(emptyCredential); };
-  const edit = row => { setForm(row); setOpen(true); }; const remove = async id => { if (!confirmDeleteAction('this account credential')) return; await updateCollection('credentials', items => items.filter(x => x.id !== id)); };
-  const resetPw = async row => updateCollection('credentials', items => items.map(x => x.id === row.id ? { ...x, temporary_password: generatePassword(), force_password_change: 'Yes' } : x));
-  const toggleActive = async row => updateCollection('credentials', items => items.map(x => x.id === row.id ? { ...x, account_active: !x.account_active } : x));
-  return <div className="space-y-4"><SectionHeader title="User Account & Credentials Management" subtitle="Create, edit, reset password, deactivate, and delete role based linked accounts." actions={<button onClick={() => { setForm(emptyCredential); setOpen(true); }} className="btn btn-primary"><i className="fas fa-plus mr-2"></i>Create Account</button>} /><div className="card p-3 md:p-4 table-wrap"><table className="min-w-full text-sm"><thead><tr className="border-b"><th className="text-left py-3 px-3 font-semibold">Role</th><th className="text-left py-3 px-3 font-semibold">Select Existing Name</th><th className="text-left py-3 px-3 font-semibold">Generated Username</th><th className="text-left py-3 px-3 font-semibold">Temporary Password</th><th className="text-left py-3 px-3 font-semibold">Force Password Change</th><th className="text-left py-3 px-3 font-semibold">Account</th><th className="text-left py-3 px-3 font-semibold">Actions</th></tr></thead><tbody>{data.credentials.length === 0 ? <tr><td colSpan="7" className="py-6 px-3 text-center text-slate-500">No records found.</td></tr> : data.credentials.map(row => <tr key={row.id} className="border-b last:border-b-0"><td className="py-3 px-3">{ROLE_LABELS[row.role]}</td><td className="py-3 px-3">{linkedEntityName(data, row.role, row.linked_entity_id)}</td><td className="py-3 px-3">{row.username}</td><td className="py-3 px-3">{row.temporary_password}</td><td className="py-3 px-3">{row.force_password_change}</td><td className="py-3 px-3"><span className={`pill ${row.account_active ? 'online' : 'offline'}`}>{row.account_active ? 'Active' : 'Inactive'}</span></td><td className="py-3 px-3"><div className="flex flex-row flex-nowrap items-center gap-2 whitespace-nowrap"><button className="btn btn-outline !px-3 !py-2 text-sm" onClick={() => edit(row)}>Edit</button><button className="btn btn-outline !px-3 !py-2 text-sm" onClick={() => resetPw(row)}>Reset PW</button><button className="btn btn-outline !px-3 !py-2 text-sm" onClick={() => toggleActive(row)}>{row.account_active ? 'Deactivate' : 'Activate'}</button><button className="btn btn-danger !px-3 !py-2 text-sm" onClick={() => remove(row.id)}>Delete</button></div></td></tr>)}</tbody></table></div><Modal open={open} onClose={() => setOpen(false)} title={form.id ? 'Edit User Account' : 'Create User Account'} max="max-w-3xl"><form onSubmit={save} className="space-y-4"><div className="grid md:grid-cols-2 gap-4"><Field label="Select Role"><select className="select" value={form.role} onChange={e => setForm({ ...form, role: e.target.value, linked_entity_id: '' })}><option value="admin">School Admin</option><option value="teacher">Teacher</option><option value="student">Student</option><option value="parent">Parent</option><option value="accountant">Accounts Office Staff</option><option value="principal">Principal</option></select></Field><Field label="Select Existing Name"><select className="select" value={form.linked_entity_id} onChange={e => setForm({ ...form, linked_entity_id: e.target.value })}><option value="">Select existing name</option>{availableLinkedRecords(data, form.role).map(x => <option key={x.id} value={x.id}>{x.full_name}</option>)}</select></Field><Field label="Generated Username"><input className="input" value={form.username} onChange={e => setForm({ ...form, username: e.target.value })} placeholder="Auto generated on save" /></Field><Field label="Temporary Password"><input className="input" value={form.temporary_password} onChange={e => setForm({ ...form, temporary_password: e.target.value })} placeholder="Auto generated on save" /></Field><Field label="Force Password Change"><select className="select" value={form.force_password_change} onChange={e => setForm({ ...form, force_password_change: e.target.value })}>{FORCE_PASSWORD_CHANGE.map(x => <option key={x}>{x}</option>)}</select></Field></div><div className="flex justify-end gap-2"><button type="button" className="btn btn-secondary" onClick={() => setOpen(false)}>Cancel</button><button type="submit" className="btn btn-primary">Save Account</button></div></form></Modal></div>;
+  const { data, updateCollection, notify } = React.useContext(DataContext); const [open, setOpen] = React.useState(false); const [form, setForm] = React.useState(emptyCredential);
+  const save = async e => { e.preventDefault(); const collection = availableLinkedRecords(data, form.role); const linked = collection.find(x => x.id === form.linked_entity_id); const payload = { ...form, id: form.id || uid(), username: form.username || (form.role === 'admin' ? 'admin' : generateUsername(linked?.full_name || ROLE_LABELS[form.role], form.role)), temporary_password: form.temporary_password || (form.role === 'admin' ? DEFAULT_ADMIN_CREDENTIAL.temporary_password : generatePassword()) }; await updateCollection('credentials', items => ensureAdminCredential(items.some(x => x.id === payload.id) ? items.map(x => x.id === payload.id ? { ...x, ...payload, is_system_default: x.is_system_default || payload.is_system_default } : x) : [...items, payload]), { suppressBusy: true, optimistic: true, successMessage: 'Credentials saved successfully.', offlineSuccessMessage: 'Credentials saved successfully.' }); setOpen(false); setForm(emptyCredential); };
+  const edit = row => { setForm(row); setOpen(true); };
+  const remove = async id => {
+    const row = ensureAdminCredential(data.credentials).find(x => x.id === id);
+    if (row?.role === 'admin') {
+      notify('error', 'School Admin credential cannot be deleted.');
+      return;
+    }
+    if (!confirmDeleteAction('this account credential')) return;
+    await updateCollection('credentials', items => ensureAdminCredential(items.filter(x => x.id !== id)), { suppressBusy: true, optimistic: true, successMessage: 'Credentials deleted successfully.', offlineSuccessMessage: 'Credentials deleted successfully.' });
+  };
+  const resetPw = async row => updateCollection('credentials', items => ensureAdminCredential(items.map(x => x.id === row.id ? { ...x, temporary_password: row.role === 'admin' ? DEFAULT_ADMIN_CREDENTIAL.temporary_password : generatePassword(), force_password_change: row.role === 'admin' ? 'No' : 'Yes' } : x)));
+  const toggleActive = async row => {
+    if (row?.role === 'admin') {
+      notify('error', 'School Admin credential must remain active.');
+      return;
+    }
+    updateCollection('credentials', items => ensureAdminCredential(items.map(x => x.id === row.id ? { ...x, account_active: !x.account_active } : x)));
+  };
+  return <div className="space-y-4"><SectionHeader title="User Account & Credentials Management" subtitle="Create, edit, reset password, deactivate, and delete role based linked accounts." actions={<button onClick={() => { setForm(emptyCredential); setOpen(true); }} className="btn btn-primary"><i className="fas fa-plus mr-2"></i>Create Account</button>} /><div className="card p-3 md:p-4 table-wrap"><table className="min-w-full text-sm"><thead><tr className="border-b"><th className="text-left py-3 px-3 font-semibold">Role</th><th className="text-left py-3 px-3 font-semibold">Select Existing Name</th><th className="text-left py-3 px-3 font-semibold">Generated Username</th><th className="text-left py-3 px-3 font-semibold">Temporary Password</th><th className="text-left py-3 px-3 font-semibold">Force Password Change</th><th className="text-left py-3 px-3 font-semibold">Account</th><th className="text-left py-3 px-3 font-semibold">Actions</th></tr></thead><tbody>{ensureAdminCredential(data.credentials).length === 0 ? <tr><td colSpan="7" className="py-6 px-3 text-center text-slate-500">No records found.</td></tr> : ensureAdminCredential(data.credentials).map(row => <tr key={row.id} className="border-b last:border-b-0"><td className="py-3 px-3">{ROLE_LABELS[row.role]}</td><td className="py-3 px-3">{linkedEntityName(data, row.role, row.linked_entity_id)}</td><td className="py-3 px-3">{row.username}</td><td className="py-3 px-3">{row.temporary_password}</td><td className="py-3 px-3">{row.force_password_change}</td><td className="py-3 px-3"><span className={`pill ${row.account_active ? 'online' : 'offline'}`}>{row.account_active ? 'Active' : 'Inactive'}</span></td><td className="py-3 px-3"><div className="flex flex-row flex-nowrap items-center gap-2 whitespace-nowrap"><button className="btn btn-outline !px-3 !py-2 text-sm" onClick={() => edit(row)}>Edit</button><button className="btn btn-outline !px-3 !py-2 text-sm" onClick={() => resetPw(row)}>Reset PW</button><button className="btn btn-outline !px-3 !py-2 text-sm" onClick={() => toggleActive(row)}>{row.role === 'admin' ? 'Always Active' : (row.account_active ? 'Deactivate' : 'Activate')}</button>{row.role === 'admin' ? <button className="btn btn-danger !px-3 !py-2 text-sm opacity-50 cursor-not-allowed" type="button" disabled>Protected</button> : <button className="btn btn-danger !px-3 !py-2 text-sm" onClick={() => remove(row.id)}>Delete</button>}</div></td></tr>)}</tbody></table></div><Modal open={open} onClose={() => setOpen(false)} title={form.id ? 'Edit User Account' : 'Create User Account'} max="max-w-3xl"><form onSubmit={save} className="space-y-4"><div className="grid md:grid-cols-2 gap-4"><Field label="Select Role"><select className="select" value={form.role} onChange={e => setForm({ ...form, role: e.target.value, linked_entity_id: '' })}><option value="admin">School Admin</option><option value="teacher">Teacher</option><option value="student">Student</option><option value="parent">Parent</option><option value="accountant">Accounts Office Staff</option><option value="principal">Principal</option></select></Field><Field label="Select Existing Name"><select className="select" value={form.linked_entity_id} onChange={e => setForm({ ...form, linked_entity_id: e.target.value })}><option value="">Select existing name</option>{availableLinkedRecords(data, form.role).map(x => <option key={x.id} value={x.id}>{x.full_name}</option>)}</select></Field><Field label="Generated Username"><input className="input" value={form.username} onChange={e => setForm({ ...form, username: e.target.value })} placeholder="Auto generated on save" /></Field><Field label="Temporary Password"><input className="input" value={form.temporary_password} onChange={e => setForm({ ...form, temporary_password: e.target.value })} placeholder="Auto generated on save" /></Field><Field label="Force Password Change"><select className="select" value={form.force_password_change} onChange={e => setForm({ ...form, force_password_change: e.target.value })}>{FORCE_PASSWORD_CHANGE.map(x => <option key={x}>{x}</option>)}</select></Field></div><div className="flex justify-end gap-2"><button type="button" className="btn btn-secondary" onClick={() => setOpen(false)}>Cancel</button><button type="submit" className="btn btn-primary">Save Account</button></div></form></Modal></div>;
 }
 
 function SchoolSettingsManager() {
@@ -1548,13 +1554,12 @@ function TeacherGrades({ teacher }) {
   const [form, setForm] = React.useState(emptyGrade);
   const teacherClasses = data.classes.filter(c => safeArray(teacher.assigned_class_ids).includes(c.id));
   const teacherSubjects = data.subjects.filter(s => safeArray(teacher.assigned_subject_ids).includes(s.id));
-  const studentOptions = data.students.filter(s => s.class_id === form.class_id && safeArray(teacher.assigned_class_ids).includes(s.class_id));
+  const studentOptions = data.students.filter(s => s.class_id === form.class_id);
   const [filterClass, setFilterClass] = React.useState('');
   const rows = data.grades.filter(g => g.teacher_id === teacher.id && (!filterClass || g.class_id === filterClass));
   const save = async e => {
     e.preventDefault();
     const computed = calcGradeRecord(form);
-    const existingRow = rows.find(x => x.id === form.id) || data.grades.find(x => x.id === form.id);
     const payload = {
       ...form,
       id: form.id || uid(),
@@ -1562,7 +1567,6 @@ function TeacherGrades({ teacher }) {
       teacher_initial: teacher.full_name.split(/\s+/).map(x => x[0]).join('').slice(0,3).toUpperCase(),
       ...computed,
       locked: form.locked || false,
-      published: existingRow?.published || form.published || false,
       position: Number(form.position || 1),
       end_exam_50: Number(form.end_exam_50),
       mid_exam_50: Number(form.mid_exam_50)
@@ -1582,16 +1586,13 @@ function TeacherGrades({ teacher }) {
   };
   const edit = row => { setForm({ ...row }); setOpen(true); };
   const remove = async id => { if (!confirmDeleteAction('this grade record')) return; await updateCollection('grades', items => items.filter(x => x.id !== id)); };
-  const togglePublish = async row => {
-    await updateCollection('grades', items => items.map(x => x.id === row.id ? { ...x, published: !x.published } : x));
-  };
   const livePreview = calcGradeRecord(form);
-  return <div className="space-y-4"><SectionHeader title="Grades" subtitle="Teachers must publish grades before students and parents can view them." actions={<><Field label=""><select className="select" value={filterClass} onChange={e => setFilterClass(e.target.value)}><option value="">All assigned classes</option>{teacherClasses.map(c => <option key={c.id} value={c.id}>{fullClassName(c)}</option>)}</select></Field><button onClick={() => { setForm({ ...emptyGrade, class_id: teacher.assigned_class_ids?.[0] || '' }); setOpen(true); }} className="btn btn-primary"><i className="fas fa-plus mr-2"></i>Add Student Grade</button></>} /><Table columns={['Student','Class','Subject','Term','Mid Semester Exams A (50)','End of Semester Exams B (50)','Total A+B%','Grade','Interpretation','Position','Teacher Initial','Publish','Lock','Actions']} rows={rows} renderCell={(row,c) => { if (c === 'Student') return data.students.find(x => x.id === row.student_id)?.full_name || ''; if (c === 'Class') return fullClassName(data.classes.find(x => x.id === row.class_id)); if (c === 'Subject') return data.subjects.find(x => x.id === row.subject_id)?.name || ''; if (c === 'Term') return row.term; if (c === 'Mid Semester Exams A (50)') return <span className="text-blue-700 font-bold">{row.mid_exam_50}</span>; if (c === 'End of Semester Exams B (50)') return <span className="text-blue-700 font-bold">{row.end_exam_50}</span>; if (c === 'Total A+B%') return <span className="text-red-700 font-extrabold">{row.total_score}</span>; if (c === 'Grade') return <span className="text-blue-700 font-bold">{row.grade_letter}</span>; if (c === 'Interpretation') return <span className="text-blue-700 font-bold">{row.interpretation}</span>; if (c === 'Position') return <span className="text-green-700 font-extrabold">{row.position}</span>; if (c === 'Teacher Initial') return row.teacher_initial; if (c === 'Publish') return <div className="flex items-center gap-2">{row.published ? <span className="pill online">Published</span> : <span className="pill absent">Draft</span>}<button className={`btn ${row.published ? 'btn-secondary' : 'btn-primary'}`} onClick={() => togglePublish(row)}>{row.published ? 'Unpublish' : 'Publish'}</button></div>; if (c === 'Lock') return <span className={`pill ${row.locked ? 'absent' : 'online'}`}>{row.locked ? 'Locked' : 'Open'}</span>; if (c === 'Actions') return <div className="flex gap-2"><button className="btn btn-outline" onClick={() => edit(row)}>Edit</button><button className="btn btn-danger" onClick={() => remove(row.id)}>Delete</button></div>; }} /><Modal open={open} onClose={() => setOpen(false)} title={form.id ? 'Edit Student Grade' : 'Add Student Grade'}><form onSubmit={save} className="space-y-4"><div className="grid md:grid-cols-2 gap-4"><Field label="Class"><select className="select" required value={form.class_id} onChange={e => setForm({ ...form, class_id: e.target.value, student_id: '' })}><option value="">Select class</option>{teacherClasses.map(c => <option key={c.id} value={c.id}>{fullClassName(c)}</option>)}</select></Field><Field label="Term"><select className="select" value={form.term} onChange={e => setForm({ ...form, term: e.target.value })}>{TERMS.map(x => <option key={x}>{x}</option>)}</select></Field><Field label="Academic Year"><input className="input" value={form.academic_year} onChange={e => setForm({ ...form, academic_year: e.target.value })} /></Field><Field label="Student"><select className="select" required value={form.student_id} onChange={e => setForm({ ...form, student_id: e.target.value })}><option value="">Select student</option>{studentOptions.map(s => <option key={s.id} value={s.id}>{s.full_name}</option>)}</select></Field><Field label="Subject"><select className="select" required value={form.subject_id} onChange={e => setForm({ ...form, subject_id: e.target.value })}><option value="">Select subject</option>{teacherSubjects.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field><Field label="Mid Semester Exams A (50)"><input type="number" min="0" max="50" className="input text-blue-700 font-bold" value={form.mid_exam_50} onChange={e => setForm({ ...form, mid_exam_50: e.target.value })} /></Field><Field label="End of Semester Exams B (50)"><input type="number" min="0" max="50" className="input text-blue-700 font-bold" value={form.end_exam_50} onChange={e => setForm({ ...form, end_exam_50: e.target.value })} /></Field><Field label="Auto Total"><input className="input text-red-700 font-extrabold" readOnly value={Number(form.mid_exam_50 || 0) + Number(form.end_exam_50 || 0)} /></Field><Field label="Auto Grade"><input className="input text-blue-700 font-bold" readOnly value={livePreview.grade_letter || ''} /></Field><Field label="Auto Interpretation"><input className="input text-blue-700 font-bold" readOnly value={livePreview.interpretation || ''} /></Field><Field label="Position"><input className="input text-green-700 font-extrabold" readOnly value={form.id ? form.position || '' : 'Auto after save'} /></Field></div><div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">Saved grades remain hidden from students and parents until the teacher clicks Publish.</div><div className="flex justify-end gap-2"><button type="button" className="btn btn-secondary" onClick={() => setOpen(false)}>Cancel</button><button type="submit" className="btn btn-primary">{form.id ? 'Update Grade' : 'Save Grade'}</button></div></form></Modal></div>;
+  return <div className="space-y-4"><SectionHeader title="Grades" subtitle="BECE grading is applied automatically from the teacher grade entry form." actions={<><Field label=""><select className="select" value={filterClass} onChange={e => setFilterClass(e.target.value)}><option value="">All assigned classes</option>{teacherClasses.map(c => <option key={c.id} value={c.id}>{fullClassName(c)}</option>)}</select></Field><button onClick={() => { setForm({ ...emptyGrade, class_id: teacher.assigned_class_ids?.[0] || '' }); setOpen(true); }} className="btn btn-primary"><i className="fas fa-plus mr-2"></i>Add Student Grade</button></>} /><Table columns={['Student','Class','Subject','Term','Mid Semester Exams A (50)','End of Semester Exams B (50)','Total A+B%','Grade','Interpretation','Position','Teacher Initial','Lock','Actions']} rows={rows} renderCell={(row,c) => { if (c === 'Student') return data.students.find(x => x.id === row.student_id)?.full_name || ''; if (c === 'Class') return fullClassName(data.classes.find(x => x.id === row.class_id)); if (c === 'Subject') return data.subjects.find(x => x.id === row.subject_id)?.name || ''; if (c === 'Term') return row.term; if (c === 'Mid Semester Exams A (50)') return <span className="text-blue-700 font-bold">{row.mid_exam_50}</span>; if (c === 'End of Semester Exams B (50)') return <span className="text-blue-700 font-bold">{row.end_exam_50}</span>; if (c === 'Total A+B%') return <span className="text-red-700 font-extrabold">{row.total_score}</span>; if (c === 'Grade') return <span className="text-blue-700 font-bold">{row.grade_letter}</span>; if (c === 'Interpretation') return <span className="text-blue-700 font-bold">{row.interpretation}</span>; if (c === 'Position') return <span className="text-green-700 font-extrabold">{row.position}</span>; if (c === 'Teacher Initial') return row.teacher_initial; if (c === 'Lock') return <span className={`pill ${row.locked ? 'absent' : 'online'}`}>{row.locked ? 'Locked' : 'Open'}</span>; if (c === 'Actions') return <div className="flex gap-2"><button className="btn btn-outline" onClick={() => edit(row)}>Edit</button><button className="btn btn-danger" onClick={() => remove(row.id)}>Delete</button></div>; }} /><Modal open={open} onClose={() => setOpen(false)} title={form.id ? 'Edit Student Grade' : 'Add Student Grade'}><form onSubmit={save} className="space-y-4"><div className="grid md:grid-cols-2 gap-4"><Field label="Class"><select className="select" required value={form.class_id} onChange={e => setForm({ ...form, class_id: e.target.value, student_id: '' })}><option value="">Select class</option>{teacherClasses.map(c => <option key={c.id} value={c.id}>{fullClassName(c)}</option>)}</select></Field><Field label="Term"><select className="select" value={form.term} onChange={e => setForm({ ...form, term: e.target.value })}>{TERMS.map(x => <option key={x}>{x}</option>)}</select></Field><Field label="Academic Year"><input className="input" value={form.academic_year} onChange={e => setForm({ ...form, academic_year: e.target.value })} /></Field><Field label="Student"><select className="select" required value={form.student_id} onChange={e => setForm({ ...form, student_id: e.target.value })}><option value="">Select student</option>{studentOptions.map(s => <option key={s.id} value={s.id}>{s.full_name}</option>)}</select></Field><Field label="Subject"><select className="select" required value={form.subject_id} onChange={e => setForm({ ...form, subject_id: e.target.value })}><option value="">Select subject</option>{teacherSubjects.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field><Field label="Mid Semester Exams A (50)"><input type="number" min="0" max="50" className="input text-blue-700 font-bold" value={form.mid_exam_50} onChange={e => setForm({ ...form, mid_exam_50: e.target.value })} /></Field><Field label="End of Semester Exams B (50)"><input type="number" min="0" max="50" className="input text-blue-700 font-bold" value={form.end_exam_50} onChange={e => setForm({ ...form, end_exam_50: e.target.value })} /></Field><Field label="Auto Total"><input className="input text-red-700 font-extrabold" readOnly value={Number(form.mid_exam_50 || 0) + Number(form.end_exam_50 || 0)} /></Field><Field label="Auto Grade"><input className="input text-blue-700 font-bold" readOnly value={livePreview.grade_letter || ''} /></Field><Field label="Auto Interpretation"><input className="input text-blue-700 font-bold" readOnly value={livePreview.interpretation || ''} /></Field><Field label="Position"><input className="input text-green-700 font-extrabold" readOnly value={form.id ? form.position || '' : 'Auto after save'} /></Field></div><div className="flex justify-end gap-2"><button type="button" className="btn btn-secondary" onClick={() => setOpen(false)}>Cancel</button><button type="submit" className="btn btn-primary">{form.id ? 'Update Grade' : 'Save Grade'}</button></div></form></Modal></div>;
 }
 
 function StudentDashboard({ activeNav }) {
   const { data } = React.useContext(DataContext); const { session } = React.useContext(SessionContext); const student = data.students.find(s => s.id === session.linkedId) || data.students[0]; if (!student) return <EmptyState text="No student record found." />;
-  const classmateCount = data.students.filter(s => s.class_id === student.class_id).length; const attendance = data.attendance.filter(a => a.student_id === student.id); const grades = data.grades.filter(g => g.student_id === student.id && g.published); const fees = data.fees.filter(f => f.student_id === student.id); const outstanding = fees.reduce((sum, f) => sum + Number(f.balance || 0), 0);
+  const classmateCount = data.students.filter(s => s.class_id === student.class_id).length; const attendance = data.attendance.filter(a => a.student_id === student.id); const grades = data.grades.filter(g => g.student_id === student.id); const fees = data.fees.filter(f => f.student_id === student.id); const outstanding = fees.reduce((sum, f) => sum + Number(f.balance || 0), 0);
   if (activeNav === 'dashboard') return <div className="space-y-6"><SectionHeader title={`Welcome, ${student.full_name}`} subtitle="Student dashboard with class, attendance, grades, fees, and live status." actions={<RoleStatusDot online={data.presence.student?.online} label="Student Status" />} /><div className="grid-fit"><StatCard label="Students in Same Class" value={classmateCount} icon="users" accent="blue" /><StatCard label="Recent Attendance Entries" value={attendance.length} icon="calendar-check" accent="emerald" /><StatCard label="Grade Entries" value={grades.length} icon="star" accent="amber" /><StatCard label="Outstanding Balance Record" value={`GHS ${outstanding.toFixed(2)}`} icon="money-bill-wave" accent="rose" /></div><div className="card p-5"><p><b>Student No:</b> {student.student_number}</p><p><b>Assigned Class:</b> {fullClassName(data.classes.find(c => c.id === student.class_id))}</p><p><b>Parent:</b> {student.parent_full_name} ({student.parent_phone_contact})</p></div></div>;
   if (activeNav === 'grades') return <StudentGrades student={student} />;
   if (activeNav === 'attendance') return <StudentAttendance student={student} />;
@@ -1605,14 +1606,14 @@ function StudentGrades({ student }) {
   const { data } = React.useContext(DataContext);
   const [term, setTerm] = React.useState('');
   const [year, setYear] = React.useState('');
-  const allRows = data.grades.filter(g => g.student_id === student.id && g.published);
+  const allRows = data.grades.filter(g => g.student_id === student.id);
   const rows = allRows.filter(g => (!term || g.term === term) && (!year || g.academic_year === year));
   const hasLockedGrades = allRows.some(g => g.locked);
   const attendanceRows = data.attendance.filter(a => a.student_id === student.id);
   const printReport = () => {
     if (hasLockedGrades || !rows.length) return;
     const reportYear = year || rows[0]?.academic_year || latestAcademicYearFromGrades(data.grades);
-    const promotion = evaluatePromotion({ ...data, grades: allRows }, student, reportYear);
+    const promotion = evaluatePromotion(data, student, reportYear);
     openStudentGradeReportPrint({
       school: data.schoolSettings,
       student,
@@ -1625,8 +1626,7 @@ function StudentGrades({ student }) {
       rows: rows.map(row => ({ ...row, subject_name: data.subjects.find(x => x.id === row.subject_id)?.name || '' }))
     });
   };
-  const noPublishedRows = !allRows.length;
-  return <div className="space-y-4"><SectionHeader title="Grades" subtitle={noPublishedRows ? 'No grades have been published for this student yet.' : (hasLockedGrades ? 'Published grades are currently locked. Please contact the Accounts Office for clarification.' : 'View and print the published student end of semester report.')} actions={<><Field label=""><select className="select" value={term} onChange={e => setTerm(e.target.value)}><option value="">All terms</option>{TERMS.map(x => <option key={x}>{x}</option>)}</select></Field><Field label=""><input className="input" placeholder="Academic year" value={year} onChange={e => setYear(e.target.value)} /></Field>{!noPublishedRows && !hasLockedGrades && <button className="btn btn-outline" onClick={printReport}><i className="fas fa-print mr-2"></i>Print Grade Report</button>}</>} />{noPublishedRows ? <div className="card p-6 border border-slate-200 bg-slate-50 text-slate-700"><div className="text-lg font-bold mb-2">No Grades Published Yet</div><p>Your teacher has not published any grades yet. Once grades are published, they will appear here for students and parents.</p></div> : hasLockedGrades ? <div className="card p-6 border border-amber-200 bg-amber-50 text-amber-900"><div className="text-lg font-bold mb-2">Grade Report Notice</div><p>This student's published grade report is currently locked. Please contact the Accounts Office for clarification before grades can be viewed or printed.</p></div> : rows.length ? <Table columns={['Student','Class','Subject','Term','Mid Semester Exams A (50)','End of Semester Exams B (50)','Total A+B%','Grade','Interpretation','Position','Teacher Initial','Status']} rows={rows} renderCell={(row,c) => { if (c === 'Student') return student.full_name; if (c === 'Class') return fullClassName(data.classes.find(x => x.id === row.class_id)); if (c === 'Subject') return data.subjects.find(x => x.id === row.subject_id)?.name || ''; if (c === 'Term') return row.term; if (c === 'Mid Semester Exams A (50)') return row.mid_exam_50; if (c === 'End of Semester Exams B (50)') return row.end_exam_50; if (c === 'Total A+B%') return row.total_score; if (c === 'Grade') return row.grade_letter; if (c === 'Interpretation') return row.interpretation; if (c === 'Position') return row.position; if (c === 'Teacher Initial') return row.teacher_initial; if (c === 'Status') return <span className={`pill ${row.locked ? 'absent' : 'online'}`}>{row.locked ? 'Locked' : 'Published'}</span>; }} /> : <div className="card p-6 border border-slate-200 bg-slate-50 text-slate-700"><div className="text-lg font-bold mb-2">No Grades Published Yet</div><p>No grades have been published for the selected term or academic year.</p></div>}</div>;
+  return <div className="space-y-4"><SectionHeader title="Grades" subtitle={hasLockedGrades ? 'Grades are currently locked. Please contact the Accounts Office for clarification.' : 'View and print the student end of semester report.'} actions={<><Field label=""><select className="select" value={term} onChange={e => setTerm(e.target.value)}><option value="">All terms</option>{TERMS.map(x => <option key={x}>{x}</option>)}</select></Field><Field label=""><input className="input" placeholder="Academic year" value={year} onChange={e => setYear(e.target.value)} /></Field>{!hasLockedGrades && <button className="btn btn-outline" onClick={printReport}><i className="fas fa-print mr-2"></i>Print Grade Report</button>}</>} />{hasLockedGrades ? <div className="card p-6 border border-amber-200 bg-amber-50 text-amber-900"><div className="text-lg font-bold mb-2">Grade Report Notice</div><p>This student's grade report is currently locked. Please contact the Accounts Office for clarification before grades can be viewed or printed.</p></div> : <Table columns={['Student','Class','Subject','Term','Mid Semester Exams A (50)','End of Semester Exams B (50)','Total A+B%','Grade','Interpretation','Position','Teacher Initial','Status']} rows={rows} renderCell={(row,c) => { if (c === 'Student') return student.full_name; if (c === 'Class') return fullClassName(data.classes.find(x => x.id === row.class_id)); if (c === 'Subject') return data.subjects.find(x => x.id === row.subject_id)?.name || ''; if (c === 'Term') return row.term; if (c === 'Mid Semester Exams A (50)') return row.mid_exam_50; if (c === 'End of Semester Exams B (50)') return row.end_exam_50; if (c === 'Total A+B%') return row.total_score; if (c === 'Grade') return row.grade_letter; if (c === 'Interpretation') return row.interpretation; if (c === 'Position') return row.position; if (c === 'Teacher Initial') return row.teacher_initial; if (c === 'Status') return <span className={`pill ${row.locked ? 'absent' : 'online'}`}>{row.locked ? 'Locked' : 'Published'}</span>; }} />}</div>;
 }
 
 function StudentAttendance({ student }) {
@@ -1642,7 +1642,7 @@ function StudentTimetable({ student }) { return <TimetableManagement classId={st
 
 function ParentDashboard({ activeNav }) {
   const { data } = React.useContext(DataContext); const { session } = React.useContext(SessionContext); const parent = data.parents.find(p => p.id === session.linkedId) || data.parents[0]; const linkedStudent = data.students.find(s => parent?.linked_student_ids?.includes(s.id)); if (!parent || !linkedStudent) return <EmptyState text="No linked parent or student record found." />;
-  const attendance = data.attendance.filter(a => a.student_id === linkedStudent.id); const grades = data.grades.filter(g => g.student_id === linkedStudent.id && g.published); const fees = data.fees.filter(f => f.student_id === linkedStudent.id); const outstanding = fees.reduce((sum, f) => sum + Number(f.balance || 0), 0); const classmateCount = data.students.filter(s => s.class_id === linkedStudent.class_id).length;
+  const attendance = data.attendance.filter(a => a.student_id === linkedStudent.id); const grades = data.grades.filter(g => g.student_id === linkedStudent.id); const fees = data.fees.filter(f => f.student_id === linkedStudent.id); const outstanding = fees.reduce((sum, f) => sum + Number(f.balance || 0), 0); const classmateCount = data.students.filter(s => s.class_id === linkedStudent.class_id).length;
   if (activeNav === 'dashboard') return <div className="space-y-6"><SectionHeader title={`Welcome, ${parent.full_name}`} subtitle="Parent dashboard linked to student records, attendance, grades, and fees." /><div className="grid-fit"><StatCard label="Students in Assigned Class" value={classmateCount} icon="users" accent="blue" /><StatCard label="Recent Attendance Entries" value={attendance.length} icon="calendar-check" accent="emerald" /><StatCard label="Grade Entries" value={grades.length} icon="star" accent="amber" /><StatCard label="Outstanding Balance Record" value={`GHS ${outstanding.toFixed(2)}`} icon="money-bill-wave" accent="rose" /></div><div className="card p-5"><p><b>Linked Student:</b> {linkedStudent.full_name}</p><p><b>Student Class:</b> {fullClassName(data.classes.find(c => c.id === linkedStudent.class_id))}</p><p><b>Parent Contact:</b> {parent.phone_contact}</p></div></div>;
   if (activeNav === 'grades') return <StudentGrades student={linkedStudent} />;
   if (activeNav === 'attendance') return <StudentAttendance student={linkedStudent} />;
