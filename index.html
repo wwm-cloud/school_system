@@ -478,11 +478,36 @@ const emptyGrade = { id: '', class_id: '', student_id: '', subject_id: '', term:
 const emptyTimetable = { id: '', class_id: '', day_of_week: 'Monday', period_time: '', subject_id: '', teacher_id: '' };
 const emptyCredential = { id: '', role: 'teacher', linked_entity_id: '', force_password_change: 'Yes', account_active: true, username: '', temporary_password: '' };
 const DEFAULT_ADMIN_CREDENTIAL = { id: 'system-admin-credential', role: 'admin', linked_entity_id: 'system-admin', force_password_change: 'No', account_active: true, username: 'admin', temporary_password: 'admin12345', is_system_default: true };
+const ADMIN_CREDENTIAL_STORAGE_KEY = 'school_system_protected_admin_credential_v1';
+function getStoredAdminCredential() {
+  try {
+    const raw = localStorage.getItem(ADMIN_CREDENTIAL_STORAGE_KEY);
+    if (!raw) return clonePlain(DEFAULT_ADMIN_CREDENTIAL);
+    const parsed = JSON.parse(raw);
+    return { ...clonePlain(DEFAULT_ADMIN_CREDENTIAL), ...parsed, role: 'admin', linked_entity_id: 'system-admin', id: 'system-admin-credential' };
+  } catch (e) {
+    return clonePlain(DEFAULT_ADMIN_CREDENTIAL);
+  }
+}
+function persistAdminCredential(credential) {
+  try {
+    const next = { ...clonePlain(DEFAULT_ADMIN_CREDENTIAL), ...(credential || {}), role: 'admin', linked_entity_id: 'system-admin', id: 'system-admin-credential' };
+    localStorage.setItem(ADMIN_CREDENTIAL_STORAGE_KEY, JSON.stringify(next));
+    return next;
+  } catch (e) {
+    return { ...clonePlain(DEFAULT_ADMIN_CREDENTIAL), ...(credential || {}), role: 'admin', linked_entity_id: 'system-admin', id: 'system-admin-credential' };
+  }
+}
 function ensureAdminCredential(items=[]) {
   const list = safeArray(items).map(item => ({ ...item }));
-  const existingAdmin = list.find(item => item?.role === 'admin');
-  if (existingAdmin) return list;
-  return [clonePlain(DEFAULT_ADMIN_CREDENTIAL), ...list];
+  const existingAdminIndex = list.findIndex(item => item?.role === 'admin');
+  const storedAdmin = getStoredAdminCredential();
+  if (existingAdminIndex >= 0) {
+    const normalizedAdmin = persistAdminCredential({ ...storedAdmin, ...list[existingAdminIndex] });
+    list[existingAdminIndex] = normalizedAdmin;
+    return list;
+  }
+  return [storedAdmin, ...list];
 }
 
 
@@ -1487,26 +1512,55 @@ function TimetableManagement({ adminMode=false, teacherId=null, classId=null }) 
 
 function UserCredentialsManagement() {
   const { data, updateCollection, notify } = React.useContext(DataContext); const [open, setOpen] = React.useState(false); const [form, setForm] = React.useState(emptyCredential);
-  const save = async e => { e.preventDefault(); const collection = availableLinkedRecords(data, form.role); const linked = collection.find(x => x.id === form.linked_entity_id); if (form.role !== 'admin' && !linked) { notify('error', 'Please select an existing name before saving credentials.'); return; } const payload = { ...form, id: form.id || uid(), username: form.username || (form.role === 'admin' ? 'admin' : generateUsername(linked?.full_name || ROLE_LABELS[form.role], form.role)), temporary_password: form.temporary_password || (form.role === 'admin' ? DEFAULT_ADMIN_CREDENTIAL.temporary_password : generatePassword()) }; await updateCollection('credentials', items => ensureAdminCredential(items.some(x => x.id === payload.id) ? items.map(x => x.id === payload.id ? { ...x, ...payload, is_system_default: x.is_system_default || payload.is_system_default } : x) : [...items, payload]), { suppressBusy: true, optimistic: true, successMessage: 'Credentials saved successfully.', offlineSuccessMessage: 'Credentials saved successfully.' }); setOpen(false); setForm(emptyCredential); };
+  const save = async e => {
+    e.preventDefault();
+    const collection = availableLinkedRecords(data, form.role);
+    const linked = collection.find(x => x.id === form.linked_entity_id);
+    if (form.role !== 'admin' && !linked) { notify('error', 'Please select an existing name before saving credentials.'); return; }
+    const adminCurrent = ensureAdminCredential(data.credentials).find(x => x.role === 'admin') || getStoredAdminCredential();
+    const payload = {
+      ...form,
+      id: form.id || uid(),
+      linked_entity_id: form.role === 'admin' ? 'system-admin' : form.linked_entity_id,
+      username: form.username || (form.role === 'admin' ? 'admin' : generateUsername(linked?.full_name || ROLE_LABELS[form.role], form.role)),
+      temporary_password: form.temporary_password || (form.role === 'admin' ? adminCurrent.temporary_password : generatePassword()),
+      account_active: form.role === 'admin' ? true : (form.account_active ?? true),
+      is_system_default: form.role === 'admin' ? (typeof form.is_system_default === 'boolean' ? form.is_system_default : true) : !!form.is_system_default
+    };
+    if (payload.role === 'admin') persistAdminCredential(payload);
+    await updateCollection('credentials', items => ensureAdminCredential(items.some(x => x.id === payload.id) ? items.map(x => x.id === payload.id ? { ...x, ...payload, is_system_default: typeof payload.is_system_default === 'boolean' ? payload.is_system_default : x.is_system_default } : x) : [...items, payload]), { suppressBusy: true, optimistic: true, successMessage: 'Credentials saved successfully.', offlineSuccessMessage: 'Credentials saved successfully.' });
+    setOpen(false); setForm(emptyCredential);
+  };
   const edit = row => { setForm(row); setOpen(true); };
   const remove = async id => {
     const row = ensureAdminCredential(data.credentials).find(x => x.id === id);
-    if (row?.role === 'admin') {
-      notify('error', 'School Admin credential cannot be deleted.');
+    if (row?.role === 'admin' && row?.is_system_default) {
+      notify('error', 'Unprotect the School Admin credential before deleting it.');
       return;
     }
     if (!confirmDeleteAction('this account credential')) return;
     await updateCollection('credentials', items => ensureAdminCredential(items.filter(x => x.id !== id)), { suppressBusy: true, optimistic: true, successMessage: 'Credentials deleted successfully.', offlineSuccessMessage: 'Credentials deleted successfully.' });
   };
-  const resetPw = async row => updateCollection('credentials', items => ensureAdminCredential(items.map(x => x.id === row.id ? { ...x, temporary_password: row.role === 'admin' ? DEFAULT_ADMIN_CREDENTIAL.temporary_password : generatePassword(), force_password_change: row.role === 'admin' ? 'No' : 'Yes' } : x)));
+  const resetPw = async row => {
+    const nextPassword = row.role === 'admin' ? generatePassword() : generatePassword();
+    if (row.role === 'admin') persistAdminCredential({ ...row, temporary_password: nextPassword, force_password_change: 'No' });
+    return updateCollection('credentials', items => ensureAdminCredential(items.map(x => x.id === row.id ? { ...x, temporary_password: nextPassword, force_password_change: row.role === 'admin' ? 'No' : 'Yes' } : x)), { suppressBusy: true, optimistic: true, successMessage: 'Credentials saved successfully.', offlineSuccessMessage: 'Credentials saved successfully.' });
+  };
   const toggleActive = async row => {
-    if (row?.role === 'admin') {
-      notify('error', 'School Admin credential must remain active.');
+    if (row?.role === 'admin' && row?.is_system_default) {
+      notify('error', 'Unprotect the School Admin credential before deactivating it.');
       return;
     }
-    updateCollection('credentials', items => ensureAdminCredential(items.map(x => x.id === row.id ? { ...x, account_active: !x.account_active } : x)));
+    if (row?.role === 'admin') persistAdminCredential({ ...row, account_active: !row.account_active });
+    updateCollection('credentials', items => ensureAdminCredential(items.map(x => x.id === row.id ? { ...x, account_active: !x.account_active } : x)), { suppressBusy: true, optimistic: true, successMessage: 'Credentials saved successfully.', offlineSuccessMessage: 'Credentials saved successfully.' });
   };
-  return <div className="space-y-4"><SectionHeader title="User Account & Credentials Management" subtitle="Create, edit, reset password, deactivate, and delete role based linked accounts." actions={<button onClick={() => { setForm(emptyCredential); setOpen(true); }} className="btn btn-primary"><i className="fas fa-plus mr-2"></i>Create Account</button>} /><div className="card p-3 md:p-4 table-wrap"><table className="min-w-full text-sm"><thead><tr className="border-b"><th className="text-left py-3 px-3 font-semibold">Role</th><th className="text-left py-3 px-3 font-semibold">Select Existing Name</th><th className="text-left py-3 px-3 font-semibold">Generated Username</th><th className="text-left py-3 px-3 font-semibold">Temporary Password</th><th className="text-left py-3 px-3 font-semibold">Force Password Change</th><th className="text-left py-3 px-3 font-semibold">Account</th><th className="text-left py-3 px-3 font-semibold">Actions</th></tr></thead><tbody>{ensureAdminCredential(data.credentials).length === 0 ? <tr><td colSpan="7" className="py-6 px-3 text-center text-slate-500">No records found.</td></tr> : ensureAdminCredential(data.credentials).map(row => <tr key={row.id} className="border-b last:border-b-0"><td className="py-3 px-3">{ROLE_LABELS[row.role]}</td><td className="py-3 px-3">{linkedEntityName(data, row.role, row.linked_entity_id)}</td><td className="py-3 px-3">{row.username}</td><td className="py-3 px-3">{row.temporary_password}</td><td className="py-3 px-3">{row.force_password_change}</td><td className="py-3 px-3"><span className={`pill ${row.account_active ? 'online' : 'offline'}`}>{row.account_active ? 'Active' : 'Inactive'}</span></td><td className="py-3 px-3"><div className="flex flex-row flex-nowrap items-center gap-2 whitespace-nowrap"><button className="btn btn-outline !px-3 !py-2 text-sm" onClick={() => edit(row)}>Edit</button><button className="btn btn-outline !px-3 !py-2 text-sm" onClick={() => resetPw(row)}>Reset PW</button><button className="btn btn-outline !px-3 !py-2 text-sm" onClick={() => toggleActive(row)}>{row.role === 'admin' ? 'Always Active' : (row.account_active ? 'Deactivate' : 'Activate')}</button>{row.role === 'admin' ? <button className="btn btn-danger !px-3 !py-2 text-sm opacity-50 cursor-not-allowed" type="button" disabled>Protected</button> : <button className="btn btn-danger !px-3 !py-2 text-sm" onClick={() => remove(row.id)}>Delete</button>}</div></td></tr>)}</tbody></table></div><Modal open={open} onClose={() => setOpen(false)} title={form.id ? 'Edit User Account' : 'Create User Account'} max="max-w-3xl"><form onSubmit={save} className="space-y-4"><div className="grid md:grid-cols-2 gap-4"><Field label="Select Role"><select className="select" value={form.role} onChange={e => setForm({ ...form, role: e.target.value, linked_entity_id: '' })}><option value="admin">School Admin</option><option value="teacher">Teacher</option><option value="student">Student</option><option value="parent">Parent</option><option value="accountant">Accounts Office Staff</option><option value="principal">Principal</option></select></Field><Field label="Select Existing Name"><select className="select" value={form.linked_entity_id} onChange={e => setForm({ ...form, linked_entity_id: e.target.value })}><option value="">Select existing name</option>{availableLinkedRecords(data, form.role).map(x => <option key={x.id} value={x.id}>{x.full_name}</option>)}</select></Field><Field label="Generated Username"><input className="input" value={form.username} onChange={e => setForm({ ...form, username: e.target.value })} placeholder="Auto generated on save" /></Field><Field label="Temporary Password"><input className="input" value={form.temporary_password} onChange={e => setForm({ ...form, temporary_password: e.target.value })} placeholder="Auto generated on save" /></Field><Field label="Force Password Change"><select className="select" value={form.force_password_change} onChange={e => setForm({ ...form, force_password_change: e.target.value })}>{FORCE_PASSWORD_CHANGE.map(x => <option key={x}>{x}</option>)}</select></Field></div><div className="flex justify-end gap-2"><button type="button" className="btn btn-secondary" onClick={() => setOpen(false)}>Cancel</button><button type="submit" className="btn btn-primary">Save Account</button></div></form></Modal></div>;
+  const toggleProtection = async row => {
+    if (row?.role !== 'admin') return;
+    const nextProtected = !row.is_system_default;
+    persistAdminCredential({ ...row, is_system_default: nextProtected, account_active: true });
+    await updateCollection('credentials', items => ensureAdminCredential(items.map(x => x.id === row.id ? { ...x, is_system_default: nextProtected, account_active: true } : x)), { suppressBusy: true, optimistic: true, successMessage: nextProtected ? 'School Admin credential protected successfully.' : 'School Admin credential unprotected successfully.', offlineSuccessMessage: nextProtected ? 'School Admin credential protected successfully.' : 'School Admin credential unprotected successfully.' });
+  };
+  return <div className="space-y-4"><SectionHeader title="User Account & Credentials Management" subtitle="Create, edit, reset password, deactivate, and delete role based linked accounts." actions={<button onClick={() => { setForm(emptyCredential); setOpen(true); }} className="btn btn-primary"><i className="fas fa-plus mr-2"></i>Create Account</button>} /><div className="card p-3 md:p-4 table-wrap"><table className="min-w-full text-sm"><thead><tr className="border-b"><th className="text-left py-3 px-3 font-semibold">Role</th><th className="text-left py-3 px-3 font-semibold">Select Existing Name</th><th className="text-left py-3 px-3 font-semibold">Generated Username</th><th className="text-left py-3 px-3 font-semibold">Temporary Password</th><th className="text-left py-3 px-3 font-semibold">Force Password Change</th><th className="text-left py-3 px-3 font-semibold">Account</th><th className="text-left py-3 px-3 font-semibold">Actions</th></tr></thead><tbody>{ensureAdminCredential(data.credentials).length === 0 ? <tr><td colSpan="7" className="py-6 px-3 text-center text-slate-500">No records found.</td></tr> : ensureAdminCredential(data.credentials).map(row => <tr key={row.id} className="border-b last:border-b-0"><td className="py-3 px-3">{ROLE_LABELS[row.role]}</td><td className="py-3 px-3">{linkedEntityName(data, row.role, row.linked_entity_id)}</td><td className="py-3 px-3">{row.username}</td><td className="py-3 px-3">{row.temporary_password}</td><td className="py-3 px-3">{row.force_password_change}</td><td className="py-3 px-3"><span className={`pill ${row.account_active ? 'online' : 'offline'}`}>{row.account_active ? 'Active' : 'Inactive'}</span></td><td className="py-3 px-3"><div className="flex flex-row flex-nowrap items-center gap-2 whitespace-nowrap"><button className="btn btn-outline !px-3 !py-2 text-sm" onClick={() => edit(row)}>Edit</button><button className="btn btn-outline !px-3 !py-2 text-sm" onClick={() => resetPw(row)}>Reset PW</button><button className="btn btn-outline !px-3 !py-2 text-sm" onClick={() => toggleActive(row)}>{row.role === 'admin' ? (row.account_active ? 'Deactivate' : 'Activate') : (row.account_active ? 'Deactivate' : 'Activate')}</button>{row.role === 'admin' ? <button className={`btn !px-3 !py-2 text-sm ${row.is_system_default ? 'btn-danger' : 'btn-primary'}`} type="button" onClick={() => toggleProtection(row)}>{row.is_system_default ? 'Protected' : 'Unprotected'}</button> : <button className="btn btn-danger !px-3 !py-2 text-sm" onClick={() => remove(row.id)}>Delete</button>}</div></td></tr>)}</tbody></table></div><Modal open={open} onClose={() => setOpen(false)} title={form.id ? 'Edit User Account' : 'Create User Account'} max="max-w-3xl"><form onSubmit={save} className="space-y-4"><div className="grid md:grid-cols-2 gap-4"><Field label="Select Role"><select className="select" value={form.role} onChange={e => setForm({ ...form, role: e.target.value, linked_entity_id: e.target.value === 'admin' ? 'system-admin' : '' })}><option value="admin">School Admin</option><option value="teacher">Teacher</option><option value="student">Student</option><option value="parent">Parent</option><option value="accountant">Accounts Office Staff</option><option value="principal">Principal</option></select></Field><Field label="Select Existing Name"><select className="select" value={form.linked_entity_id} onChange={e => setForm({ ...form, linked_entity_id: e.target.value })} disabled={form.role === 'admin'}><option value="">{form.role === 'admin' ? 'System School Admin' : 'Select existing name'}</option>{availableLinkedRecords(data, form.role).map(x => <option key={x.id} value={x.id}>{x.full_name}</option>)}</select></Field><Field label="Generated Username"><input className="input" value={form.username} onChange={e => setForm({ ...form, username: e.target.value })} placeholder="Auto generated on save" /></Field><Field label="Temporary Password"><input className="input" value={form.temporary_password} onChange={e => setForm({ ...form, temporary_password: e.target.value })} placeholder="Auto generated on save" /></Field><Field label="Force Password Change"><select className="select" value={form.force_password_change} onChange={e => setForm({ ...form, force_password_change: e.target.value })}>{FORCE_PASSWORD_CHANGE.map(x => <option key={x}>{x}</option>)}</select></Field></div><div className="flex justify-end gap-2"><button type="button" className="btn btn-secondary" onClick={() => setOpen(false)}>Cancel</button><button type="submit" className="btn btn-primary">Save Account</button></div></form></Modal></div>;
 }
 
 function SchoolSettingsManager() {
