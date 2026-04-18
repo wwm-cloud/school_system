@@ -477,37 +477,43 @@ const emptyAttendance = { id: '', class_id: '', student_id: '', status: 'Present
 const emptyGrade = { id: '', class_id: '', student_id: '', subject_id: '', term: 'Term 1', academic_year: new Date().getFullYear().toString(), mid_exam_50: '', end_exam_50: '' };
 const emptyTimetable = { id: '', class_id: '', day_of_week: 'Monday', period_time: '', subject_id: '', teacher_id: '' };
 const emptyCredential = { id: '', role: 'teacher', linked_entity_id: '', force_password_change: 'Yes', account_active: true, username: '', temporary_password: '' };
-const DEFAULT_ADMIN_CREDENTIAL = { id: 'system-admin-credential', role: 'admin', linked_entity_id: 'system-admin', force_password_change: 'No', account_active: true, username: 'admin', temporary_password: 'admin12345', is_system_default: true };
-const ADMIN_CREDENTIAL_STORAGE_KEY = 'school_system_protected_admin_credential_v1';
-function getStoredAdminCredential() {
-  try {
-    const raw = localStorage.getItem(ADMIN_CREDENTIAL_STORAGE_KEY);
-    if (!raw) return clonePlain(DEFAULT_ADMIN_CREDENTIAL);
-    const parsed = JSON.parse(raw);
-    return { ...clonePlain(DEFAULT_ADMIN_CREDENTIAL), ...parsed, role: 'admin', linked_entity_id: 'system-admin', id: 'system-admin-credential' };
-  } catch (e) {
-    return clonePlain(DEFAULT_ADMIN_CREDENTIAL);
-  }
-}
-function persistAdminCredential(credential) {
-  try {
-    const next = { ...clonePlain(DEFAULT_ADMIN_CREDENTIAL), ...(credential || {}), role: 'admin', linked_entity_id: 'system-admin', id: 'system-admin-credential' };
-    localStorage.setItem(ADMIN_CREDENTIAL_STORAGE_KEY, JSON.stringify(next));
-    return next;
-  } catch (e) {
-    return { ...clonePlain(DEFAULT_ADMIN_CREDENTIAL), ...(credential || {}), role: 'admin', linked_entity_id: 'system-admin', id: 'system-admin-credential' };
-  }
+const DEFAULT_ADMIN_CREDENTIAL = { id: '', role: 'admin', linked_entity_id: '', force_password_change: 'No', account_active: true, username: 'admin', temporary_password: 'admin12345', is_system_default: true };
+function normalizeAdminCredential(credential={}) {
+  return {
+    ...clonePlain(DEFAULT_ADMIN_CREDENTIAL),
+    ...(credential || {}),
+    role: 'admin',
+    linked_entity_id: credential?.linked_entity_id || ''
+  };
 }
 function ensureAdminCredential(items=[]) {
   const list = safeArray(items).map(item => ({ ...item }));
   const existingAdminIndex = list.findIndex(item => item?.role === 'admin');
-  const storedAdmin = getStoredAdminCredential();
   if (existingAdminIndex >= 0) {
-    const normalizedAdmin = persistAdminCredential({ ...storedAdmin, ...list[existingAdminIndex] });
-    list[existingAdminIndex] = normalizedAdmin;
+    list[existingAdminIndex] = normalizeAdminCredential(list[existingAdminIndex]);
     return list;
   }
-  return [storedAdmin, ...list];
+  return [normalizeAdminCredential(DEFAULT_ADMIN_CREDENTIAL), ...list];
+}
+async function ensureBackendAdminCredential(credentialsRaw=[]) {
+  const rows = safeArray(credentialsRaw);
+  const existingAdmin = rows.find(item => item?.role === 'admin');
+  if (existingAdmin) return rows;
+  if (!supabase) return [normalizeAdminCredential(DEFAULT_ADMIN_CREDENTIAL), ...rows];
+  const adminInsert = {
+    role: 'admin',
+    linked_entity_id: null,
+    username: DEFAULT_ADMIN_CREDENTIAL.username,
+    temporary_password: DEFAULT_ADMIN_CREDENTIAL.temporary_password,
+    force_password_change: false,
+    account_active: true
+  };
+  const { data, error } = await supabase.from('user_credentials').insert(adminInsert).select().single();
+  if (error) {
+    console.error('Failed to auto-create backend admin credential', error);
+    return [normalizeAdminCredential(DEFAULT_ADMIN_CREDENTIAL), ...rows];
+  }
+  return [data, ...rows];
 }
 
 
@@ -539,7 +545,7 @@ function seedData() {
     { id: 'cred3', role: 'parent', linked_entity_id: 'par1', username: 'martha.asare.par201', temporary_password: 'temp12345', force_password_change: 'Yes', account_active: true },
     { id: 'cred4', role: 'principal', linked_entity_id: 'pri1', username: 'ama.owusu.pri120', temporary_password: 'temp12345', force_password_change: 'No', account_active: true },
     { id: 'cred5', role: 'accountant', linked_entity_id: 'acc1', username: 'michael.tetteh.acc115', temporary_password: 'temp12345', force_password_change: 'No', account_active: true },
-    { ...DEFAULT_ADMIN_CREDENTIAL }
+    { ...normalizeAdminCredential(DEFAULT_ADMIN_CREDENTIAL), id: 'cred-admin-seed' }
   ];
   const chats = [
     { id: 'c1', sender_role: 'teacher', sender_id: 't1', receiver_role: 'principal', receiver_id: 'pri1', message: 'Attendance has been submitted for JHS 1A.', created_at: new Date().toISOString(), is_read: true, deleted_by_sender: false, deleted_by_receiver: false, banned: false }
@@ -649,7 +655,7 @@ async function fetchTable(table) {
 async function fetchAllSchoolData() {
   if (!supabase) return seedData();
   await ensureSupabaseBrowserSession();
-  const [schoolSettingsRes, profiles, principalsRaw, accountStaffRaw, teachersRaw, studentsRaw, parentsRaw, parentLinksRaw, classAssignmentsRaw, subjectAssignmentsRaw, classes, subjects, timetableRaw, attendanceRaw, gradesRaw, feesRaw, credentialsRaw, chatsRaw, presenceRaw] = await Promise.all([
+  const [schoolSettingsRes, profiles, principalsRaw, accountStaffRaw, teachersRaw, studentsRaw, parentsRaw, parentLinksRaw, classAssignmentsRaw, subjectAssignmentsRaw, classes, subjects, timetableRaw, attendanceRaw, gradesRaw, feesRaw, credentialsRawInitial, chatsRaw, presenceRaw] = await Promise.all([
     supabase.from('school_settings').select('*').eq('id', 1).single(),
     fetchTable('profiles'),
     fetchTable('principals'),
@@ -672,6 +678,7 @@ async function fetchAllSchoolData() {
   ]);
 
   if (schoolSettingsRes.error && schoolSettingsRes.error.code !== 'PGRST116') throw schoolSettingsRes.error;
+  const credentialsRaw = await ensureBackendAdminCredential(credentialsRawInitial || []);
   const profileMap = new Map((profiles || []).map(p => [p.id, p]));
   const parentLinksByParent = {};
   (parentLinksRaw || []).forEach(link => {
@@ -891,9 +898,9 @@ function usePersistentSchoolData() {
     else if (key === 'grades') await syncSimpleTable('grades', prevItems, nextItems, item => ({ id: dbId(item.id), class_id: item.class_id, student_id: item.student_id, teacher_id: item.teacher_id || null, subject_id: item.subject_id, term: item.term, academic_year: item.academic_year, mid_exam_50: Number(item.mid_exam_50 || 0), end_exam_50: Number(item.end_exam_50 || 0), grade_letter: item.grade_letter || null, interpretation: item.interpretation || null, position: item.position || null, teacher_initial: item.teacher_initial || null, locked: !!item.locked }));
     else if (key === 'fees') await syncSimpleTable('fees', prevItems, nextItems, item => ({ id: dbId(item.id), student_id: item.student_id, class_id: item.class_id, academic_year: item.academic_year, term: item.term, amount_due: Number(item.amount_due || 0), amount_paid: Number(item.amount_paid || 0), payment_method: item.payment_method || null, recorded_by: item.recorded_by || null }));
     else if (key === 'credentials') {
-      const filteredPrev = safeArray(prevItems).filter(item => item?.role !== 'admin' && !!dbId(item?.linked_entity_id));
-      const filteredNext = safeArray(nextItems).filter(item => item?.role !== 'admin' && !!dbId(item?.linked_entity_id));
-      await syncSimpleTable('user_credentials', filteredPrev, filteredNext, item => ({ id: dbId(item.id), role: item.role, linked_entity_id: item.linked_entity_id, username: item.username, temporary_password: item.temporary_password, force_password_change: fromYesNo(item.force_password_change), account_active: item.account_active ?? true }));
+      const filteredPrev = safeArray(prevItems);
+      const filteredNext = safeArray(nextItems);
+      await syncSimpleTable('user_credentials', filteredPrev, filteredNext, item => ({ id: dbId(item.id), role: item.role, linked_entity_id: dbId(item.linked_entity_id) || null, username: item.username, temporary_password: item.temporary_password, force_password_change: fromYesNo(item.force_password_change), account_active: item.account_active ?? true }));
     }
     else if (key === 'chats') await syncSimpleTable('chat_messages', prevItems, nextItems, item => ({ id: dbId(item.id), sender_role: item.sender_role, sender_id: item.sender_id || null, receiver_role: item.receiver_role, receiver_id: item.receiver_id || null, message: item.message, is_read: !!item.is_read, deleted_by_sender: !!item.deleted_by_sender, deleted_by_receiver: !!item.deleted_by_receiver, banned: !!item.banned, created_at: item.created_at || new Date().toISOString() }));
   }, []);
@@ -1517,17 +1524,16 @@ function UserCredentialsManagement() {
     const collection = availableLinkedRecords(data, form.role);
     const linked = collection.find(x => x.id === form.linked_entity_id);
     if (form.role !== 'admin' && !linked) { notify('error', 'Please select an existing name before saving credentials.'); return; }
-    const adminCurrent = ensureAdminCredential(data.credentials).find(x => x.role === 'admin') || getStoredAdminCredential();
+    const adminCurrent = ensureAdminCredential(data.credentials).find(x => x.role === 'admin') || normalizeAdminCredential(DEFAULT_ADMIN_CREDENTIAL);
     const payload = {
       ...form,
       id: form.id || uid(),
-      linked_entity_id: form.role === 'admin' ? 'system-admin' : form.linked_entity_id,
+      linked_entity_id: form.role === 'admin' ? '' : form.linked_entity_id,
       username: form.username || (form.role === 'admin' ? 'admin' : generateUsername(linked?.full_name || ROLE_LABELS[form.role], form.role)),
       temporary_password: form.temporary_password || (form.role === 'admin' ? adminCurrent.temporary_password : generatePassword()),
       account_active: form.role === 'admin' ? true : (form.account_active ?? true),
       is_system_default: form.role === 'admin' ? (typeof form.is_system_default === 'boolean' ? form.is_system_default : true) : !!form.is_system_default
     };
-    if (payload.role === 'admin') persistAdminCredential(payload);
     await updateCollection('credentials', items => ensureAdminCredential(items.some(x => x.id === payload.id) ? items.map(x => x.id === payload.id ? { ...x, ...payload, is_system_default: typeof payload.is_system_default === 'boolean' ? payload.is_system_default : x.is_system_default } : x) : [...items, payload]), { suppressBusy: true, optimistic: true, successMessage: 'Credentials saved successfully.', offlineSuccessMessage: 'Credentials saved successfully.' });
     setOpen(false); setForm(emptyCredential);
   };
@@ -1542,8 +1548,7 @@ function UserCredentialsManagement() {
     await updateCollection('credentials', items => ensureAdminCredential(items.filter(x => x.id !== id)), { suppressBusy: true, optimistic: true, successMessage: 'Credentials deleted successfully.', offlineSuccessMessage: 'Credentials deleted successfully.' });
   };
   const resetPw = async row => {
-    const nextPassword = row.role === 'admin' ? generatePassword() : generatePassword();
-    if (row.role === 'admin') persistAdminCredential({ ...row, temporary_password: nextPassword, force_password_change: 'No' });
+    const nextPassword = generatePassword();
     return updateCollection('credentials', items => ensureAdminCredential(items.map(x => x.id === row.id ? { ...x, temporary_password: nextPassword, force_password_change: row.role === 'admin' ? 'No' : 'Yes' } : x)), { suppressBusy: true, optimistic: true, successMessage: 'Credentials saved successfully.', offlineSuccessMessage: 'Credentials saved successfully.' });
   };
   const toggleActive = async row => {
@@ -1551,16 +1556,14 @@ function UserCredentialsManagement() {
       notify('error', 'Unprotect the School Admin credential before deactivating it.');
       return;
     }
-    if (row?.role === 'admin') persistAdminCredential({ ...row, account_active: !row.account_active });
     updateCollection('credentials', items => ensureAdminCredential(items.map(x => x.id === row.id ? { ...x, account_active: !x.account_active } : x)), { suppressBusy: true, optimistic: true, successMessage: 'Credentials saved successfully.', offlineSuccessMessage: 'Credentials saved successfully.' });
   };
   const toggleProtection = async row => {
     if (row?.role !== 'admin') return;
     const nextProtected = !row.is_system_default;
-    persistAdminCredential({ ...row, is_system_default: nextProtected, account_active: true });
     await updateCollection('credentials', items => ensureAdminCredential(items.map(x => x.id === row.id ? { ...x, is_system_default: nextProtected, account_active: true } : x)), { suppressBusy: true, optimistic: true, successMessage: nextProtected ? 'School Admin credential protected successfully.' : 'School Admin credential unprotected successfully.', offlineSuccessMessage: nextProtected ? 'School Admin credential protected successfully.' : 'School Admin credential unprotected successfully.' });
   };
-  return <div className="space-y-4"><SectionHeader title="User Account & Credentials Management" subtitle="Create, edit, reset password, deactivate, and delete role based linked accounts." actions={<button onClick={() => { setForm(emptyCredential); setOpen(true); }} className="btn btn-primary"><i className="fas fa-plus mr-2"></i>Create Account</button>} /><div className="card p-3 md:p-4 table-wrap"><table className="min-w-full text-sm"><thead><tr className="border-b"><th className="text-left py-3 px-3 font-semibold">Role</th><th className="text-left py-3 px-3 font-semibold">Select Existing Name</th><th className="text-left py-3 px-3 font-semibold">Generated Username</th><th className="text-left py-3 px-3 font-semibold">Temporary Password</th><th className="text-left py-3 px-3 font-semibold">Force Password Change</th><th className="text-left py-3 px-3 font-semibold">Account</th><th className="text-left py-3 px-3 font-semibold">Actions</th></tr></thead><tbody>{ensureAdminCredential(data.credentials).length === 0 ? <tr><td colSpan="7" className="py-6 px-3 text-center text-slate-500">No records found.</td></tr> : ensureAdminCredential(data.credentials).map(row => <tr key={row.id} className="border-b last:border-b-0"><td className="py-3 px-3">{ROLE_LABELS[row.role]}</td><td className="py-3 px-3">{linkedEntityName(data, row.role, row.linked_entity_id)}</td><td className="py-3 px-3">{row.username}</td><td className="py-3 px-3">{row.temporary_password}</td><td className="py-3 px-3">{row.force_password_change}</td><td className="py-3 px-3"><span className={`pill ${row.account_active ? 'online' : 'offline'}`}>{row.account_active ? 'Active' : 'Inactive'}</span></td><td className="py-3 px-3"><div className="flex flex-row flex-nowrap items-center gap-2 whitespace-nowrap"><button className="btn btn-outline !px-3 !py-2 text-sm" onClick={() => edit(row)}>Edit</button><button className="btn btn-outline !px-3 !py-2 text-sm" onClick={() => resetPw(row)}>Reset PW</button><button className="btn btn-outline !px-3 !py-2 text-sm" onClick={() => toggleActive(row)}>{row.role === 'admin' ? (row.account_active ? 'Deactivate' : 'Activate') : (row.account_active ? 'Deactivate' : 'Activate')}</button>{row.role === 'admin' ? <button className={`btn !px-3 !py-2 text-sm ${row.is_system_default ? 'btn-danger' : 'btn-primary'}`} type="button" onClick={() => toggleProtection(row)}>{row.is_system_default ? 'Protected' : 'Unprotected'}</button> : <button className="btn btn-danger !px-3 !py-2 text-sm" onClick={() => remove(row.id)}>Delete</button>}</div></td></tr>)}</tbody></table></div><Modal open={open} onClose={() => setOpen(false)} title={form.id ? 'Edit User Account' : 'Create User Account'} max="max-w-3xl"><form onSubmit={save} className="space-y-4"><div className="grid md:grid-cols-2 gap-4"><Field label="Select Role"><select className="select" value={form.role} onChange={e => setForm({ ...form, role: e.target.value, linked_entity_id: e.target.value === 'admin' ? 'system-admin' : '' })}><option value="admin">School Admin</option><option value="teacher">Teacher</option><option value="student">Student</option><option value="parent">Parent</option><option value="accountant">Accounts Office Staff</option><option value="principal">Principal</option></select></Field><Field label="Select Existing Name"><select className="select" value={form.linked_entity_id} onChange={e => setForm({ ...form, linked_entity_id: e.target.value })} disabled={form.role === 'admin'}><option value="">{form.role === 'admin' ? 'System School Admin' : 'Select existing name'}</option>{availableLinkedRecords(data, form.role).map(x => <option key={x.id} value={x.id}>{x.full_name}</option>)}</select></Field><Field label="Generated Username"><input className="input" value={form.username} onChange={e => setForm({ ...form, username: e.target.value })} placeholder="Auto generated on save" /></Field><Field label="Temporary Password"><input className="input" value={form.temporary_password} onChange={e => setForm({ ...form, temporary_password: e.target.value })} placeholder="Auto generated on save" /></Field><Field label="Force Password Change"><select className="select" value={form.force_password_change} onChange={e => setForm({ ...form, force_password_change: e.target.value })}>{FORCE_PASSWORD_CHANGE.map(x => <option key={x}>{x}</option>)}</select></Field></div><div className="flex justify-end gap-2"><button type="button" className="btn btn-secondary" onClick={() => setOpen(false)}>Cancel</button><button type="submit" className="btn btn-primary">Save Account</button></div></form></Modal></div>;
+  return <div className="space-y-4"><SectionHeader title="User Account & Credentials Management" subtitle="Create, edit, reset password, deactivate, and delete role based linked accounts." actions={<button onClick={() => { setForm(emptyCredential); setOpen(true); }} className="btn btn-primary"><i className="fas fa-plus mr-2"></i>Create Account</button>} /><div className="card p-3 md:p-4 table-wrap"><table className="min-w-full text-sm"><thead><tr className="border-b"><th className="text-left py-3 px-3 font-semibold">Role</th><th className="text-left py-3 px-3 font-semibold">Select Existing Name</th><th className="text-left py-3 px-3 font-semibold">Generated Username</th><th className="text-left py-3 px-3 font-semibold">Temporary Password</th><th className="text-left py-3 px-3 font-semibold">Force Password Change</th><th className="text-left py-3 px-3 font-semibold">Account</th><th className="text-left py-3 px-3 font-semibold">Actions</th></tr></thead><tbody>{ensureAdminCredential(data.credentials).length === 0 ? <tr><td colSpan="7" className="py-6 px-3 text-center text-slate-500">No records found.</td></tr> : ensureAdminCredential(data.credentials).map(row => <tr key={row.id} className="border-b last:border-b-0"><td className="py-3 px-3">{ROLE_LABELS[row.role]}</td><td className="py-3 px-3">{linkedEntityName(data, row.role, row.linked_entity_id)}</td><td className="py-3 px-3">{row.username}</td><td className="py-3 px-3">{row.temporary_password}</td><td className="py-3 px-3">{row.force_password_change}</td><td className="py-3 px-3"><span className={`pill ${row.account_active ? 'online' : 'offline'}`}>{row.account_active ? 'Active' : 'Inactive'}</span></td><td className="py-3 px-3"><div className="flex flex-row flex-nowrap items-center gap-2 whitespace-nowrap"><button className="btn btn-outline !px-3 !py-2 text-sm" onClick={() => edit(row)}>Edit</button><button className="btn btn-outline !px-3 !py-2 text-sm" onClick={() => resetPw(row)}>Reset PW</button><button className="btn btn-outline !px-3 !py-2 text-sm" onClick={() => toggleActive(row)}>{row.role === 'admin' ? (row.account_active ? 'Deactivate' : 'Activate') : (row.account_active ? 'Deactivate' : 'Activate')}</button>{row.role === 'admin' ? <button className={`btn !px-3 !py-2 text-sm ${row.is_system_default ? 'btn-danger' : 'btn-primary'}`} type="button" onClick={() => toggleProtection(row)}>{row.is_system_default ? 'Protected' : 'Unprotected'}</button> : <button className="btn btn-danger !px-3 !py-2 text-sm" onClick={() => remove(row.id)}>Delete</button>}</div></td></tr>)}</tbody></table></div><Modal open={open} onClose={() => setOpen(false)} title={form.id ? 'Edit User Account' : 'Create User Account'} max="max-w-3xl"><form onSubmit={save} className="space-y-4"><div className="grid md:grid-cols-2 gap-4"><Field label="Select Role"><select className="select" value={form.role} onChange={e => setForm({ ...form, role: e.target.value, linked_entity_id: '' })}><option value="admin">School Admin</option><option value="teacher">Teacher</option><option value="student">Student</option><option value="parent">Parent</option><option value="accountant">Accounts Office Staff</option><option value="principal">Principal</option></select></Field><Field label="Select Existing Name"><select className="select" value={form.linked_entity_id} onChange={e => setForm({ ...form, linked_entity_id: e.target.value })} disabled={form.role === 'admin'}><option value="">{form.role === 'admin' ? 'Backend School Admin' : 'Select existing name'}</option>{availableLinkedRecords(data, form.role).map(x => <option key={x.id} value={x.id}>{x.full_name}</option>)}</select></Field><Field label="Generated Username"><input className="input" value={form.username} onChange={e => setForm({ ...form, username: e.target.value })} placeholder="Auto generated on save" /></Field><Field label="Temporary Password"><input className="input" value={form.temporary_password} onChange={e => setForm({ ...form, temporary_password: e.target.value })} placeholder="Auto generated on save" /></Field><Field label="Force Password Change"><select className="select" value={form.force_password_change} onChange={e => setForm({ ...form, force_password_change: e.target.value })}>{FORCE_PASSWORD_CHANGE.map(x => <option key={x}>{x}</option>)}</select></Field></div><div className="flex justify-end gap-2"><button type="button" className="btn btn-secondary" onClick={() => setOpen(false)}>Cancel</button><button type="submit" className="btn btn-primary">Save Account</button></div></form></Modal></div>;
 }
 
 function SchoolSettingsManager() {
