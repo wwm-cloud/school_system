@@ -477,13 +477,14 @@ const emptyAttendance = { id: '', class_id: '', student_id: '', status: 'Present
 const emptyGrade = { id: '', class_id: '', student_id: '', subject_id: '', term: 'Term 1', academic_year: new Date().getFullYear().toString(), mid_exam_50: '', end_exam_50: '' };
 const emptyTimetable = { id: '', class_id: '', day_of_week: 'Monday', period_time: '', subject_id: '', teacher_id: '' };
 const emptyCredential = { id: '', role: 'teacher', linked_entity_id: '', force_password_change: 'Yes', account_active: true, username: '', temporary_password: '' };
-const DEFAULT_ADMIN_CREDENTIAL = { id: '', role: 'admin', linked_entity_id: '', force_password_change: 'No', account_active: true, username: 'admin', temporary_password: 'admin12345', is_system_default: true };
+const ADMIN_LINKED_ENTITY_ID = '00000000-0000-4000-8000-000000000001';
+const DEFAULT_ADMIN_CREDENTIAL = { id: '', role: 'admin', linked_entity_id: ADMIN_LINKED_ENTITY_ID, force_password_change: 'No', account_active: true, username: 'admin', temporary_password: 'admin12345', is_system_default: true };
 function normalizeAdminCredential(credential={}) {
   return {
     ...clonePlain(DEFAULT_ADMIN_CREDENTIAL),
     ...(credential || {}),
     role: 'admin',
-    linked_entity_id: credential?.linked_entity_id || ''
+    linked_entity_id: dbId(credential?.linked_entity_id) || ADMIN_LINKED_ENTITY_ID
   };
 }
 function ensureAdminCredential(items=[]) {
@@ -900,7 +901,7 @@ function usePersistentSchoolData() {
     else if (key === 'credentials') {
       const filteredPrev = safeArray(prevItems);
       const filteredNext = safeArray(nextItems);
-      await syncSimpleTable('user_credentials', filteredPrev, filteredNext, item => ({ id: dbId(item.id), role: item.role, linked_entity_id: dbId(item.linked_entity_id) || null, username: item.username, temporary_password: item.temporary_password, force_password_change: fromYesNo(item.force_password_change), account_active: item.account_active ?? true }));
+      await syncSimpleTable('user_credentials', filteredPrev, filteredNext, item => ({ id: dbId(item.id), role: item.role, linked_entity_id: item.role === 'admin' ? (dbId(item.linked_entity_id) || ADMIN_LINKED_ENTITY_ID) : (dbId(item.linked_entity_id) || null), username: item.username, temporary_password: item.temporary_password, force_password_change: fromYesNo(item.force_password_change), account_active: item.account_active ?? true }));
     }
     else if (key === 'chats') await syncSimpleTable('chat_messages', prevItems, nextItems, item => ({ id: dbId(item.id), sender_role: item.sender_role, sender_id: item.sender_id || null, receiver_role: item.receiver_role, receiver_id: item.receiver_id || null, message: item.message, is_read: !!item.is_read, deleted_by_sender: !!item.deleted_by_sender, deleted_by_receiver: !!item.deleted_by_receiver, banned: !!item.banned, created_at: item.created_at || new Date().toISOString() }));
   }, []);
