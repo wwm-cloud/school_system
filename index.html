@@ -752,7 +752,7 @@ async function syncTeachers(prevItems, nextItems) {
   const prevMap = new Map((prevItems || []).map(item => [item.id, item]));
   const nextMap = new Map((nextItems || []).map(item => [item.id, item]));
   for (const prev of prevItems || []) {
-    if (!nextMap.has(prev.id)) {
+    if (!nextMap.has(prev.id) && dbId(prev.id)) {
       await supabase.from('teacher_class_assignments').delete().eq('teacher_id', prev.id);
       await supabase.from('teacher_subject_assignments').delete().eq('teacher_id', prev.id);
       await supabase.from('timetable').delete().eq('teacher_id', prev.id);
@@ -767,10 +767,21 @@ async function syncTeachers(prevItems, nextItems) {
     }
   }
   for (const item of nextItems || []) {
+    const staffNumber = String(item.staff_number || '').trim() || null;
+    let teacherId = dbId(item.id);
+    if (!teacherId && staffNumber) {
+      const { data: existingByStaff, error: existingByStaffError } = await supabase
+        .from('teachers')
+        .select('id, staff_number')
+        .eq('staff_number', staffNumber)
+        .maybeSingle();
+      if (existingByStaffError) throw existingByStaffError;
+      if (existingByStaff?.id) teacherId = existingByStaff.id;
+    }
     const row = {
-      id: dbId(item.id),
+      id: teacherId,
       full_name: item.full_name,
-      staff_number: item.staff_number || null,
+      staff_number: staffNumber,
       emis_code: item.emis_code || null,
       ghana_card: item.ghana_card || null,
       gender: item.gender || null,
@@ -782,9 +793,9 @@ async function syncTeachers(prevItems, nextItems) {
       photo_url: item.photo_url || null,
       account_active: item.account_active ?? true
     };
-    const { data: saved, error } = await supabase.from('teachers').upsert(row).select().single();
+    const { data: saved, error } = await supabase.from('teachers').upsert(row, { onConflict: 'staff_number' }).select().single();
     if (error) throw error;
-    const teacherId = saved.id;
+    teacherId = saved.id;
     await supabase.from('teacher_class_assignments').delete().eq('teacher_id', teacherId);
     if (safeArray(item.assigned_class_ids).length) {
       const { error: classErr } = await supabase.from('teacher_class_assignments').insert(safeArray(item.assigned_class_ids).map(classId => ({ teacher_id: teacherId, class_id: classId })));
@@ -805,10 +816,21 @@ async function syncStudents(prevItems, nextItems) {
     if (!nextMap.has(prev.id)) await supabase.from('students').delete().eq('id', prev.id);
   }
   for (const item of nextItems || []) {
+    const studentNumber = String(item.student_number || '').trim() || null;
+    let studentId = dbId(item.id);
+    if (!studentId && studentNumber) {
+      const { data: existingByNumber, error: existingByNumberError } = await supabase
+        .from('students')
+        .select('id, student_number')
+        .eq('student_number', studentNumber)
+        .maybeSingle();
+      if (existingByNumberError) throw existingByNumberError;
+      if (existingByNumber?.id) studentId = existingByNumber.id;
+    }
     const row = {
-      id: dbId(item.id),
+      id: studentId,
       full_name: item.full_name,
-      student_number: item.student_number || null,
+      student_number: studentNumber,
       class_id: item.class_id || null,
       student_section: item.student_section || null,
       gender: item.gender || null,
@@ -819,7 +841,11 @@ async function syncStudents(prevItems, nextItems) {
       photo_url: item.photo_url || null,
       account_active: item.account_active ?? true
     };
-    const { error } = await supabase.from('students').upsert(row);
+    const upsertOptions = studentNumber ? { onConflict: 'student_number' } : undefined;
+    const query = upsertOptions
+      ? supabase.from('students').upsert(row, upsertOptions)
+      : supabase.from('students').upsert(row);
+    const { error } = await query;
     if (error) throw error;
   }
 }
