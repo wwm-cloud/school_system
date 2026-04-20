@@ -289,6 +289,7 @@ function buildStudentGradeReportHtml({ school, student, classLabel, term, year, 
   const attendanceExpected = attendanceRows.length;
   const attendancePercent = attendanceExpected ? Math.round((attendanceActual / attendanceExpected) * 100) : 0;
   const logoHtml = school.logo_url ? `<img src="${school.logo_url}" style="width:74px;height:74px;object-fit:cover;border-radius:50%;border:3px solid #0f766e;" />` : `<div style="width:74px;height:74px;border-radius:50%;background:#ccfbf1;border:3px solid #0f766e;display:flex;align-items:center;justify-content:center;font-weight:800;color:#115e59;">SMS</div>`;
+  const studentPhotoHtml = student?.photo_url ? `<img src="${student.photo_url}" style="width:110px;height:130px;object-fit:cover;border-radius:18px;border:3px solid #0f766e;background:#fff;" />` : `<div style="width:110px;height:130px;border-radius:18px;border:2px dashed #94a3b8;background:#f8fafc;display:flex;align-items:center;justify-content:center;text-align:center;font-size:12px;font-weight:700;color:#475569;padding:10px;">Student Photo</div>`;
   const rowsHtml = rows.map(row => {
     const subjectName = row.subject_name || '';
     return `<tr>
@@ -318,9 +319,11 @@ function buildStudentGradeReportHtml({ school, student, classLabel, term, year, 
   .school-name { font-size: 28px; font-weight: 900; color: #115e59; letter-spacing: .6px; }
   .school-sub { font-size: 14px; font-weight: 700; color: #334155; margin-top: 4px; }
   .title { margin-top: 16px; text-align: center; font-size: 22px; font-weight: 900; color: #1e3a8a; text-transform: uppercase; text-decoration: underline; }
-  .meta { margin-top: 18px; display: grid; grid-template-columns: 1fr 1fr; gap: 12px 26px; font-size: 14px; }
+  .identity-wrap { margin-top: 18px; display: grid; grid-template-columns: 1fr 120px; gap: 18px; align-items: start; }
+  .meta { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 26px; font-size: 14px; }
   .meta div { padding-bottom: 6px; border-bottom: 1px dashed #94a3b8; }
   .meta strong { color: #0f172a; }
+  .student-photo-box { display:flex; justify-content:flex-end; }
   .section-title { margin: 22px 0 10px; text-align: center; font-size: 18px; font-weight: 900; color: #7c2d12; letter-spacing: 2px; text-transform: uppercase; }
   table { width: 100%; border-collapse: collapse; }
   th, td { border: 1px solid #64748b; padding: 8px 7px; font-size: 13px; text-align: center; }
@@ -352,13 +355,16 @@ function buildStudentGradeReportHtml({ school, student, classLabel, term, year, 
         ${logoHtml}
       </div>
       <div class="title">Student's End of Semester Report</div>
-      <div class="meta">
-        <div><strong>Name:</strong> ${student.full_name || ''}</div>
-        <div><strong>Academic Year:</strong> ${year || ''}</div>
-        <div><strong>Index Number:</strong> ${student.student_number || ''}</div>
-        <div><strong>Semester:</strong> ${term || ''}</div>
-        <div><strong>Form / Level:</strong> ${classLabel || ''}</div>
-        <div><strong>Promotion Status:</strong> <span style="color:${promotionColor};font-weight:800;">${promotionText || 'Pending evaluation'}</span></div>
+      <div class="identity-wrap">
+        <div class="meta">
+          <div><strong>Name:</strong> ${student.full_name || ''}</div>
+          <div><strong>Academic Year:</strong> ${year || ''}</div>
+          <div><strong>Index Number:</strong> ${student.student_number || ''}</div>
+          <div><strong>Semester:</strong> ${term || ''}</div>
+          <div><strong>Form / Level:</strong> ${classLabel || ''}</div>
+          <div><strong>Promotion Status:</strong> <span style="color:${promotionColor};font-weight:800;">${promotionText || 'Pending evaluation'}</span></div>
+        </div>
+        <div class="student-photo-box">${studentPhotoHtml}</div>
       </div>
     </div>
 
@@ -413,6 +419,75 @@ function buildStudentGradeReportHtml({ school, student, classLabel, term, year, 
 function openStudentGradeReportPrint(payload) {
   const html = buildStudentGradeReportHtml(payload);
   const win = window.open('', '_blank', 'width=1100,height=900');
+  if (!win) return;
+  win.document.open();
+  win.document.write(html);
+  win.document.close();
+  win.focus();
+  setTimeout(() => { try { win.print(); } catch (e) {} }, 450);
+}
+function getSchoolPrintIdentity(school={}) {
+  return {
+    name: school?.school_name?.trim() || 'School Management System',
+    addressLine: [school?.address, school?.location].filter(Boolean).join(' • '),
+    contact: school?.contact || '',
+    logoUrl: school?.logo_url || ''
+  };
+}
+function buildSchoolIdentityHeaderHtml(school={}, title='School Report', subtitle='') {
+  const identity = getSchoolPrintIdentity(school);
+  const logoHtml = identity.logoUrl
+    ? `<img src="${identity.logoUrl}" style="width:68px;height:68px;object-fit:cover;border-radius:16px;border:2px solid #0f766e;background:#fff;" />`
+    : `<div style="width:68px;height:68px;border-radius:16px;border:2px solid #0f766e;background:#ccfbf1;display:flex;align-items:center;justify-content:center;font-weight:800;color:#115e59;">SMS</div>`;
+  return `<div class="report-head"><div class="report-head-top">${logoHtml}<div class="report-school-center"><div class="report-school-name">${identity.name}</div><div class="report-school-sub">${identity.addressLine || 'School record printout'}</div><div class="report-school-sub">${identity.contact || ''}</div></div>${logoHtml}</div><div class="report-title">${title}</div>${subtitle ? `<div class="report-title-sub">${subtitle}</div>` : ''}</div>`;
+}
+function buildRecordsPrintHtml({ school, title, subtitle='', columns=[], rows=[] }) {
+  const safeColumns = safeArray(columns);
+  const safeRows = safeArray(rows);
+  const headerHtml = buildSchoolIdentityHeaderHtml(school, title, subtitle);
+  const tableHead = safeColumns.map(col => `<th>${col}</th>`).join('');
+  const tableRows = safeRows.length
+    ? safeRows.map(row => `<tr>${safeColumns.map(col => `<td>${row[col] ?? ''}</td>`).join('')}</tr>`).join('')
+    : `<tr><td colspan="${Math.max(safeColumns.length, 1)}">No records available.</td></tr>`;
+  return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>${title}</title>
+<style>
+  * { box-sizing: border-box; font-family: Arial, sans-serif; }
+  body { margin: 0; background: #f3f4f6; color: #0f172a; }
+  .page { width: 297mm; min-height: 210mm; margin: 0 auto; background: white; padding: 12mm 10mm; }
+  .report-head { border: 3px solid #0f766e; border-radius: 20px; padding: 14px 18px; background: linear-gradient(135deg,#ecfeff,#f0fdf4); }
+  .report-head-top { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+  .report-school-center { flex:1; text-align:center; }
+  .report-school-name { font-size: 28px; font-weight: 900; color:#115e59; letter-spacing:.4px; }
+  .report-school-sub { font-size: 14px; font-weight:700; color:#334155; margin-top:4px; }
+  .report-title { margin-top: 14px; text-align:center; font-size: 22px; font-weight:900; color:#1e3a8a; text-transform:uppercase; }
+  .report-title-sub { margin-top: 6px; text-align:center; font-size: 13px; color:#475569; font-weight:700; }
+  table { width:100%; border-collapse:collapse; margin-top: 16px; table-layout: auto; }
+  th, td { border:1px solid #64748b; padding:7px 8px; font-size:12px; text-align:left; vertical-align:top; white-space:normal; word-break:break-word; }
+  th { background:#dbeafe; color:#1e3a8a; font-weight:800; }
+  tbody tr:nth-child(even) { background:#f8fafc; }
+  .footnote { margin-top: 10px; text-align:right; font-size: 11px; color:#64748b; }
+  @media print { body { background:white; } .page { width:auto; min-height:auto; padding:8mm; } }
+</style>
+</head>
+<body>
+  <div class="page">
+    ${headerHtml}
+    <table>
+      <thead><tr>${tableHead}</tr></thead>
+      <tbody>${tableRows}</tbody>
+    </table>
+    <div class="footnote">Generated on ${new Date().toLocaleString()}</div>
+  </div>
+</body>
+</html>`;
+}
+function openRecordsPrint(payload) {
+  const html = buildRecordsPrintHtml(payload);
+  const win = window.open('', '_blank', 'width=1400,height=900');
   if (!win) return;
   win.document.open();
   win.document.write(html);
@@ -1189,7 +1264,7 @@ function SectionHeader({ title, subtitle, actions }) { return <div className="fl
 function ImageInput({ label, value, onChange, storageFolder='general' }) { const { notify } = React.useContext(DataContext); const [uploading, setUploading] = React.useState(false); return <div><label className="block text-sm font-semibold mb-2">{label}</label><div className="flex items-center gap-4">{value ? <img src={value} alt="" className="w-16 h-16 rounded-full object-cover border" /> : <div className="w-16 h-16 rounded-full bg-slate-100 flex items-center justify-center border"><i className="fas fa-image text-slate-400"></i></div>}<div className="space-y-2"><input type="file" accept="image/*" disabled={uploading} onChange={async e => { const file = e.target.files?.[0]; if (!file) return; setUploading(true); try { const url = await uploadImageToStorage(file, storageFolder || label); onChange(url); notify('success', 'Image uploaded successfully.'); } catch (error) { console.error('Image upload failed', error); try { const fallback = await fileToDataUrl(file); onChange(fallback); notify('info', 'Storage upload failed, so a local image version was used.'); } catch (_) { notify('error', error?.message || 'Image upload failed.'); } } finally { setUploading(false); } }} /><div className="text-xs text-slate-400">{uploading ? 'Uploading image...' : 'PNG or JPG, up to 2MB.'}</div></div></div></div>; }
 function MultiCheckbox({ label, items, value, onChange, getLabel=(x)=>x.label || x.name }) { const current = safeArray(value); const toggle = id => current.includes(id) ? onChange(current.filter(x => x !== id)) : onChange([...current, id]); return <div><label className="block text-sm font-semibold mb-2">{label}</label><div className="grid md:grid-cols-2 gap-2 border rounded-xl p-3 bg-slate-50">{items.map(item => <label key={item.id} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={current.includes(item.id)} onChange={() => toggle(item.id)} /><span>{getLabel(item)}</span></label>)}</div></div>; }
 function RoleStatusDot({ online, label }) { return <span className={`pill ${online ? 'online' : 'offline'}`}><i className="fas fa-circle text-[8px]"></i> {label}: {online ? 'Online' : 'Offline'}</span>; }
-function PrintButton({ label='Print' }) { return <button onClick={printCurrent} className="btn btn-outline"><i className="fas fa-print mr-2"></i>{label}</button>; }
+function PrintButton({ label='Print', onClick=printCurrent }) { return <button onClick={onClick} className="btn btn-outline"><i className="fas fa-print mr-2"></i>{label}</button>; }
 function EmptyState({ text }) { return <div className="card p-8 text-center text-slate-500">{text}</div>; }
 function Field({ label, children }) { return <div>{label !== '' && <label className="block text-sm font-semibold mb-2">{label}</label>}{children}</div>; }
 function Table({ columns, rows, renderCell }) { return <div className="card p-4 table-wrap"><table className="min-w-full text-sm"><thead><tr className="border-b">{columns.map(c => <th key={c} className="text-left py-3 px-2 font-semibold">{c}</th>)}</tr></thead><tbody>{rows.length === 0 ? <tr><td colSpan={columns.length} className="py-6 px-2 text-center text-slate-500">No records found.</td></tr> : rows.map((row, idx) => <tr key={row.id || idx} className="border-b last:border-b-0">{columns.map(c => <td key={c} className="py-3 px-2 align-top">{renderCell(row, c)}</td>)}</tr>)}</tbody></table></div>; }
@@ -1215,7 +1290,16 @@ function OfflineStateBanner({ state, onSync }) {
     </div>
   );
 }
-function AppFooter() { return <footer className="px-4 md:px-6 py-6 text-center text-xs md:text-sm text-slate-500"><span>© 2026 Wood World Missions Int'l School. All rights reserved.</span></footer>; }
+function AppFooter() {
+  const { data } = React.useContext(DataContext);
+  const schoolName = (data?.schoolSettings?.school_name || defaultSchool.school_name || 'School Management System').trim();
+  const year = new Date().getFullYear();
+  return (
+    <footer className="px-4 md:px-6 py-6 text-center text-xs md:text-sm text-slate-500">
+      <span>© {year} {schoolName}. All rights reserved.</span>
+    </footer>
+  );
+}
 
 function linkedEntityName(data, role, linkedId) {
   const collection = role === 'teacher' ? data.teachers : role === 'student' ? data.students : role === 'parent' ? data.parents : role === 'accountant' ? data.accountStaff : role === 'principal' ? data.principals : [];
@@ -1326,8 +1410,23 @@ function App() {
 }
 
 function Header() {
-  const { data } = React.useContext(DataContext); const { session, logout, mobileNavOpen, setMobileNavOpen } = React.useContext(SessionContext);
-  return <header className="sticky-header px-3 md:px-6 py-2.5 md:py-3 flex items-center justify-between gap-3 no-print"><div className="flex items-center gap-2.5 md:gap-3 min-w-0 flex-1">{session.role && <button onClick={() => setMobileNavOpen(!mobileNavOpen)} className="md:hidden w-11 h-11 rounded-xl border border-slate-200 bg-white flex items-center justify-center shrink-0" aria-label="Open navigation menu"><i className={`fas ${mobileNavOpen ? 'fa-times' : 'fa-bars'} text-slate-700`}></i></button>}{data.schoolSettings.logo_url ? <img src={data.schoolSettings.logo_url} className="w-12 h-12 rounded-full object-cover border shrink-0" /> : <div className="w-12 h-12 rounded-full bg-[var(--theme-primary)] text-white flex items-center justify-center shrink-0"><i className="fas fa-school"></i></div>}<div className="min-w-0"><h1 className="text-base sm:text-lg md:text-2xl font-extrabold text-[color:var(--theme-text-strong)] mobile-header-title break-words">{data.schoolSettings.school_name}</h1><p className="text-[11px] md:text-xs text-slate-500 leading-tight">{[data.schoolSettings.address, data.schoolSettings.contact, data.schoolSettings.location].filter(Boolean).join(' • ') || 'School Management System'}</p></div></div><div className="flex items-center gap-2 md:gap-3 shrink-0">{session.role && <><span className="pill online hidden sm:inline-flex"><i className="fas fa-user-shield"></i> {ROLE_LABELS[session.role]}</span><button onClick={logout} className="btn btn-outline px-3 md:px-4"><i className="fas fa-sign-out-alt md:mr-2"></i><span className="hidden md:inline">Logout</span></button></>}</div></header>;
+  const { data, reloadData, flushPendingChanges, notify } = React.useContext(DataContext); const { session, mobileNavOpen, setMobileNavOpen } = React.useContext(SessionContext);
+  const [refreshing, setRefreshing] = React.useState(false);
+  const handleRefresh = React.useCallback(async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      await flushPendingChanges();
+      await reloadData({ silent: true });
+      if (browserOnline()) notify('success', 'System refreshed successfully.');
+      else notify('info', 'Offline mode active. Local data refreshed.');
+    } catch (error) {
+      notify('error', error?.message || 'Failed to refresh system data.');
+    } finally {
+      setRefreshing(false);
+    }
+  }, [flushPendingChanges, notify, refreshing, reloadData]);
+  return <header className="sticky-header px-3 md:px-6 py-2.5 md:py-3 flex items-center justify-between gap-3 no-print"><div className="flex items-center gap-2.5 md:gap-3 min-w-0 flex-1">{session.role && <button onClick={() => setMobileNavOpen(!mobileNavOpen)} className="md:hidden w-11 h-11 rounded-xl border border-slate-200 bg-white flex items-center justify-center shrink-0" aria-label="Open navigation menu"><i className={`fas ${mobileNavOpen ? 'fa-times' : 'fa-bars'} text-slate-700`}></i></button>}{data.schoolSettings.logo_url ? <img src={data.schoolSettings.logo_url} className="w-12 h-12 rounded-full object-cover border shrink-0" /> : <div className="w-12 h-12 rounded-full bg-[var(--theme-primary)] text-white flex items-center justify-center shrink-0"><i className="fas fa-school"></i></div>}<div className="min-w-0"><h1 className="text-base sm:text-lg md:text-2xl font-extrabold text-[color:var(--theme-text-strong)] mobile-header-title break-words">{data.schoolSettings.school_name}</h1><p className="text-[11px] md:text-xs text-slate-500 leading-tight">{[data.schoolSettings.address, data.schoolSettings.contact, data.schoolSettings.location].filter(Boolean).join(' • ') || 'School Management System'}</p></div></div><div className="flex items-center gap-2 md:gap-3 shrink-0">{session.role && <><span className="pill online hidden sm:inline-flex"><i className="fas fa-user-shield"></i> {ROLE_LABELS[session.role]}</span><button type="button" onClick={handleRefresh} disabled={refreshing} className="btn btn-outline px-3 md:px-4 disabled:opacity-60 disabled:cursor-not-allowed" aria-label="Refresh system data" title="Refresh system data"><i className={`fas ${refreshing ? 'fa-spinner fa-spin' : 'fa-rotate-right'} md:mr-2`}></i><span className="hidden md:inline">Refresh</span></button></>}</div></header>;
 }
 
 function LoginScreen() {
@@ -1448,18 +1547,30 @@ function ForcePasswordChangeModal({ open, onSave }) {
 
 function Sidebar() {
   const { data } = React.useContext(DataContext);
-  const { session, activeNav, setActiveNav, mobileNavOpen, setMobileNavOpen } = React.useContext(SessionContext);
+  const { session, activeNav, setActiveNav, mobileNavOpen, setMobileNavOpen, logout } = React.useContext(SessionContext);
   const unreadChatCount = React.useMemo(() => getUnreadChatCount(data.chats, session.role, session.linkedId), [data.chats, session.role, session.linkedId]);
   const items = React.useMemo(() => {
-    if (session.role === 'admin') return [['dashboard', 'Dashboard', 'tachometer-alt'], ['principals', 'Principal Management', 'crown'], ['teachers', 'Teachers Management', 'chalkboard-user'], ['students', 'Students Management', 'user-graduate'], ['parents', 'Parents Management', 'users'], ['accountstaff', 'Account Office Staff', 'calculator'], ['classes', 'Classes Management', 'layer-group'], ['subjects', 'Subjects Management', 'book'], ['timetable', 'Timetable Management', 'clock'], ['accounts', 'Accounts & Credentials', 'key'], ['chat', 'System Chat', 'comments'], ['settings', 'School Logo & Details', 'cog']];
-    if (session.role === 'teacher') return [['dashboard', 'Dashboard', 'tachometer-alt'], ['students', 'Student Management', 'users'], ['attendance', 'Attendance Records', 'calendar-check'], ['grades', 'Grades', 'star'], ['timetable', 'Timetable', 'clock'], ['chat', 'System Chat', 'comments'], ['profile', 'My Profile', 'image']];
-    if (session.role === 'student') return [['dashboard', 'Dashboard', 'tachometer-alt'], ['grades', 'Grades', 'star'], ['attendance', 'Attendance Records', 'calendar'], ['fees', 'Fee Payments', 'money-bill-wave'], ['timetable', 'Timetable', 'clock'], ['chat', 'System Chat', 'comments']];
-    if (session.role === 'parent') return [['dashboard', 'Dashboard', 'tachometer-alt'], ['grades', 'Grades', 'star'], ['attendance', 'Attendance Records', 'calendar'], ['fees', 'Fee Payments', 'money-bill-wave'], ['chat', 'System Chat', 'comments']];
-    if (session.role === 'accountant') return [['dashboard', 'Dashboard', 'tachometer-alt'], ['fees', 'Fee Payments', 'hand-holding-usd'], ['statements', 'Fees Statement', 'file-invoice'], ['gradelock', 'Grades Lock Control', 'lock']];
-    if (session.role === 'principal') return [['dashboard', 'Dashboard', 'tachometer-alt'], ['students', 'Student Management', 'user-graduate'], ['teachers', 'Teacher Management', 'chalkboard-user'], ['academic', 'Academic Performance', 'chart-line'], ['attendance', 'Attendance Summary', 'calendar-alt'], ['chat', 'System Chat', 'comments']];
-    return [];
+    let navItems = [];
+    if (session.role === 'admin') navItems = [['dashboard', 'Dashboard', 'tachometer-alt'], ['principals', 'Principal Management', 'crown'], ['teachers', 'Teachers Management', 'chalkboard-user'], ['students', 'Students Management', 'user-graduate'], ['parents', 'Parents Management', 'users'], ['accountstaff', 'Account Office Staff', 'calculator'], ['classes', 'Classes Management', 'layer-group'], ['subjects', 'Subjects Management', 'book'], ['timetable', 'Timetable Management', 'clock'], ['accounts', 'Accounts & Credentials', 'key'], ['chat', 'System Chat', 'comments'], ['settings', 'School Logo & Details', 'cog']];
+    else if (session.role === 'teacher') navItems = [['dashboard', 'Dashboard', 'tachometer-alt'], ['students', 'Student Management', 'users'], ['attendance', 'Attendance Records', 'calendar-check'], ['grades', 'Grades', 'star'], ['timetable', 'Timetable', 'clock'], ['chat', 'System Chat', 'comments'], ['profile', 'My Profile', 'image']];
+    else if (session.role === 'student') navItems = [['dashboard', 'Dashboard', 'tachometer-alt'], ['grades', 'Grades', 'star'], ['attendance', 'Attendance Records', 'calendar'], ['fees', 'Fee Payments', 'money-bill-wave'], ['timetable', 'Timetable', 'clock'], ['chat', 'System Chat', 'comments']];
+    else if (session.role === 'parent') navItems = [['dashboard', 'Dashboard', 'tachometer-alt'], ['grades', 'Grades', 'star'], ['attendance', 'Attendance Records', 'calendar'], ['fees', 'Fee Payments', 'money-bill-wave'], ['chat', 'System Chat', 'comments']];
+    else if (session.role === 'accountant') navItems = [['dashboard', 'Dashboard', 'tachometer-alt'], ['fees', 'Fee Payments', 'hand-holding-usd'], ['statements', 'Fees Statement', 'file-invoice'], ['gradelock', 'Grades Lock Control', 'lock']];
+    else if (session.role === 'principal') navItems = [['dashboard', 'Dashboard', 'tachometer-alt'], ['students', 'Student Management', 'user-graduate'], ['teachers', 'Teacher Management', 'chalkboard-user'], ['academic', 'Academic Performance', 'chart-line'], ['attendance', 'Attendance Summary', 'calendar-alt'], ['chat', 'System Chat', 'comments']];
+    return session.role ? [...navItems, ['logout', 'Logout', 'sign-out-alt']] : navItems;
   }, [session.role]);
-  const handleNavigate = (key) => { setActiveNav(key); setMobileNavOpen(false); };
+  const handleNavigate = async (key) => {
+    if (key === 'logout') {
+      setMobileNavOpen(false);
+      await logout();
+      return;
+    }
+    setActiveNav(key);
+    setMobileNavOpen(false);
+  };
+  const getItemClasses = key => key === 'logout'
+    ? 'w-full text-left px-3 py-3 rounded-xl flex items-center gap-3 text-red-600 hover:bg-red-50 font-semibold'
+    : `w-full text-left px-3 py-3 rounded-xl flex items-center gap-3 ${activeNav === key ? 'bg-emerald-50 text-[color:var(--theme-text-strong)] font-semibold' : 'hover:bg-slate-100'}`;
   return <>
     <div className={`fixed inset-0 z-50 md:hidden ${mobileNavOpen ? '' : 'pointer-events-none'}`}>
       <div className={`absolute inset-0 bg-slate-900/40 transition-opacity ${mobileNavOpen ? 'opacity-100' : 'opacity-0'}`} onClick={() => setMobileNavOpen(false)}></div>
@@ -1471,10 +1582,10 @@ function Sidebar() {
           </div>
           <button onClick={() => setMobileNavOpen(false)} className="w-10 h-10 rounded-xl border border-slate-200 bg-white flex items-center justify-center"><i className="fas fa-times"></i></button>
         </div>
-        <div className="sidebar-scroll space-y-1 pr-1">{items.map(([key, label, icon]) => <button key={key} onClick={() => handleNavigate(key)} className={`w-full text-left px-3 py-3 rounded-xl flex items-center gap-3 ${activeNav === key ? 'bg-emerald-50 text-[color:var(--theme-text-strong)] font-semibold' : 'hover:bg-slate-100'}`}><i className={`fas fa-${icon} w-5`}></i><span className="text-sm flex-1">{label}</span>{key === 'chat' && unreadChatCount > 0 && <span className="min-w-[24px] h-6 px-2 rounded-full bg-red-500 text-white text-xs font-bold inline-flex items-center justify-center">{unreadChatCount > 99 ? '99+' : unreadChatCount}</span>}</button>)}</div>
+        <div className="sidebar-scroll space-y-1 pr-1">{items.map(([key, label, icon]) => <button key={key} onClick={() => handleNavigate(key)} className={getItemClasses(key)}><i className={`fas fa-${icon} w-5`}></i><span className="text-sm flex-1">{label}</span>{key === 'chat' && unreadChatCount > 0 && <span className="min-w-[24px] h-6 px-2 rounded-full bg-red-500 text-white text-xs font-bold inline-flex items-center justify-center">{unreadChatCount > 99 ? '99+' : unreadChatCount}</span>}</button>)}</div>
       </aside>
     </div>
-    <aside className="w-72 bg-white border-r p-4 hidden md:block no-print"><div className="sidebar-scroll"><div className="mb-3 text-xs font-bold uppercase tracking-widest text-slate-400">Navigation</div><div className="space-y-1">{items.map(([key, label, icon]) => <button key={key} onClick={() => setActiveNav(key)} className={`w-full text-left px-3 py-3 rounded-xl flex items-center gap-3 ${activeNav === key ? 'bg-emerald-50 text-[color:var(--theme-text-strong)] font-semibold' : 'hover:bg-slate-100'}`}><i className={`fas fa-${icon} w-5`}></i><span className="text-sm flex-1">{label}</span>{key === 'chat' && unreadChatCount > 0 && <span className="min-w-[24px] h-6 px-2 rounded-full bg-red-500 text-white text-xs font-bold inline-flex items-center justify-center">{unreadChatCount > 99 ? '99+' : unreadChatCount}</span>}</button>)}</div></div></aside>
+    <aside className="w-72 bg-white border-r p-4 hidden md:block no-print"><div className="sidebar-scroll"><div className="mb-3 text-xs font-bold uppercase tracking-widest text-slate-400">Navigation</div><div className="space-y-1">{items.map(([key, label, icon]) => <button key={key} onClick={() => handleNavigate(key)} className={getItemClasses(key)}><i className={`fas fa-${icon} w-5`}></i><span className="text-sm flex-1">{label}</span>{key === 'chat' && unreadChatCount > 0 && <span className="min-w-[24px] h-6 px-2 rounded-full bg-red-500 text-white text-xs font-bold inline-flex items-center justify-center">{unreadChatCount > 99 ? '99+' : unreadChatCount}</span>}</button>)}</div></div></aside>
   </>;
 }
 
@@ -1508,15 +1619,58 @@ function TeacherManagement() {
   const { data, updateCollection } = React.useContext(DataContext); const [open, setOpen] = React.useState(false); const [form, setForm] = React.useState(emptyTeacher);
   const teacherClassNames = t => safeArray(t.assigned_class_ids).map(id => fullClassName(data.classes.find(c => c.id === id))).filter(Boolean).join(', ');
   const teacherSubjectNames = t => safeArray(t.assigned_subject_ids).map(id => data.subjects.find(s => s.id === id)?.name).filter(Boolean).join(', ');
+  const printTeachers = () => openRecordsPrint({
+    school: data.schoolSettings,
+    title: 'Teacher Records Report',
+    subtitle: `Total Teachers: ${data.teachers.length}`,
+    columns: ['Staff No','Full Name','Assigned Subjects','Assigned Classes','Qualification','EMIS','Ghana Card','Gender','Date of Birth','Training','Primary Specialty','Contact Address','Account'],
+    rows: data.teachers.map(row => ({
+      'Staff No': row.staff_number || '',
+      'Full Name': row.full_name || '',
+      'Assigned Subjects': teacherSubjectNames(row),
+      'Assigned Classes': teacherClassNames(row),
+      'Qualification': row.qualification || '',
+      'EMIS': row.emis_code || '',
+      'Ghana Card': row.ghana_card || '',
+      'Gender': row.gender || '',
+      'Date of Birth': row.dob || '',
+      'Training': row.trained || '',
+      'Primary Specialty': row.primary_specialty || '',
+      'Contact Address': row.contact_address || '',
+      'Account': row.account_active ? 'Active' : 'Inactive'
+    }))
+  });
   const save = async e => { e.preventDefault(); const prefix = numberPrefix(data.schoolSettings.school_name, 'TCH'); const payload = { ...form, id: form.id || uid(), staff_number: form.staff_number || `${prefix}${String(data.teachers.length + 1001).padStart(5,'0')}`, account_active: form.account_active ?? true }; validateCollectionRecord('teacher', payload, data.teachers); await updateCollection('teachers', items => items.some(x => x.id === payload.id) ? items.map(x => x.id === payload.id ? payload : x) : [...items, payload]); setOpen(false); setForm(emptyTeacher); };
   const edit = t => { setForm(t); setOpen(true); };
   const remove = async id => { if (!confirmDeleteAction('this teacher record')) return; await updateCollection('teachers', items => items.filter(x => x.id !== id)); };
-  return <div className="space-y-4"><SectionHeader title="Teachers Management" subtitle="Assign classes and subjects only from School Admin Classes and Subjects." actions={<><PrintButton label="Print Teachers Records" /><button onClick={() => { setForm(emptyTeacher); setOpen(true); }} className="btn btn-primary"><i className="fas fa-plus mr-2"></i>Add Teacher</button></>} /><Table columns={['Photo','Staff No','Full Name','Assigned Subjects','Assigned Classes','Qualification','EMIS','Ghana Card','Gender','Date of Birth','Training','Primary Specialty','Account','Actions']} rows={data.teachers} renderCell={(row,c) => { if (c === 'Photo') return row.photo_url ? <img src={row.photo_url} className="w-10 h-10 rounded-full object-cover" /> : <i className="fas fa-user-circle text-2xl text-slate-400"></i>; if (c === 'Staff No') return row.staff_number; if (c === 'Full Name') return row.full_name; if (c === 'Assigned Subjects') return teacherSubjectNames(row); if (c === 'Assigned Classes') return teacherClassNames(row); if (c === 'Qualification') return row.qualification; if (c === 'EMIS') return row.emis_code; if (c === 'Ghana Card') return row.ghana_card; if (c === 'Gender') return row.gender; if (c === 'Date of Birth') return row.dob; if (c === 'Training') return row.trained; if (c === 'Primary Specialty') return row.primary_specialty; if (c === 'Account') return <span className={`pill ${row.account_active ? 'online' : 'offline'}`}>{row.account_active ? 'Active' : 'Inactive'}</span>; if (c === 'Actions') return <div className="flex gap-2"><button className="btn btn-outline" onClick={() => edit(row)}>Edit</button><button className="btn btn-danger" onClick={() => remove(row.id)}>Delete</button></div>; }} /><Modal open={open} onClose={() => setOpen(false)} title={form.id ? 'Edit Teacher' : 'Add Teacher'} max="max-w-5xl"><form onSubmit={save} className="space-y-4"><ImageInput label="Teacher Photo" storageFolder="teachers" value={form.photo_url} onChange={v => setForm({ ...form, photo_url: v })} /><div className="grid md:grid-cols-2 gap-4"><Field label="Full Name"><input className="input" required value={form.full_name} onChange={e => setForm({ ...form, full_name: e.target.value })} /></Field><Field label="Teacher EMIS Code"><input className="input" value={form.emis_code} onChange={e => setForm({ ...form, emis_code: e.target.value })} /></Field><Field label="Ghana Card"><input className="input" value={form.ghana_card} onChange={e => setForm({ ...form, ghana_card: e.target.value })} /></Field><Field label="Gender"><select className="select" value={form.gender} onChange={e => setForm({ ...form, gender: e.target.value })}>{GENDERS.map(x => <option key={x}>{x}</option>)}</select></Field><Field label="Date of Birth"><input type="date" className="input" value={form.dob} onChange={e => setForm({ ...form, dob: e.target.value })} /></Field><Field label="Qualification"><select className="select" value={form.qualification} onChange={e => setForm({ ...form, qualification: e.target.value })}>{QUALIFICATIONS.map(x => <option key={x}>{x}</option>)}</select></Field><Field label="Training Status"><select className="select" value={form.trained} onChange={e => setForm({ ...form, trained: e.target.value })}>{TRAINING_STATUS.map(x => <option key={x}>{x}</option>)}</select></Field><Field label="Primary Specialty"><input className="input" value={form.primary_specialty} onChange={e => setForm({ ...form, primary_specialty: e.target.value })} /></Field><Field label="Contact Address"><input className="input" value={form.contact_address} onChange={e => setForm({ ...form, contact_address: e.target.value })} /></Field><Field label="Staff Number"><input className="input" value={form.staff_number} readOnly placeholder="Auto generated by school name" /></Field></div><MultiCheckbox label="Assign Subjects" items={data.subjects} value={form.assigned_subject_ids} onChange={v => setForm({ ...form, assigned_subject_ids: v })} getLabel={s => `${s.name}${s.code ? ` (${s.code})` : ''}`} /><MultiCheckbox label="Assign Classes" items={data.classes} value={form.assigned_class_ids} onChange={v => setForm({ ...form, assigned_class_ids: v })} getLabel={c => fullClassName(c)} /><div className="flex justify-end gap-2"><button type="button" className="btn btn-secondary" onClick={() => setOpen(false)}>Cancel</button><button type="submit" className="btn btn-primary">Save Teacher</button></div></form></Modal></div>;
+  return <div className="space-y-4"><SectionHeader title="Teachers Management" subtitle="Assign classes and subjects only from School Admin Classes and Subjects." actions={<><PrintButton label="Print Teachers Records" onClick={printTeachers} /><button onClick={() => { setForm(emptyTeacher); setOpen(true); }} className="btn btn-primary"><i className="fas fa-plus mr-2"></i>Add Teacher</button></>} /><Table columns={['Photo','Staff No','Full Name','Assigned Subjects','Assigned Classes','Qualification','EMIS','Ghana Card','Gender','Date of Birth','Training','Primary Specialty','Account','Actions']} rows={data.teachers} renderCell={(row,c) => { if (c === 'Photo') return row.photo_url ? <img src={row.photo_url} className="w-10 h-10 rounded-full object-cover" /> : <i className="fas fa-user-circle text-2xl text-slate-400"></i>; if (c === 'Staff No') return row.staff_number; if (c === 'Full Name') return row.full_name; if (c === 'Assigned Subjects') return teacherSubjectNames(row); if (c === 'Assigned Classes') return teacherClassNames(row); if (c === 'Qualification') return row.qualification; if (c === 'EMIS') return row.emis_code; if (c === 'Ghana Card') return row.ghana_card; if (c === 'Gender') return row.gender; if (c === 'Date of Birth') return row.dob; if (c === 'Training') return row.trained; if (c === 'Primary Specialty') return row.primary_specialty; if (c === 'Account') return <span className={`pill ${row.account_active ? 'online' : 'offline'}`}>{row.account_active ? 'Active' : 'Inactive'}</span>; if (c === 'Actions') return <div className="flex gap-2"><button className="btn btn-outline" onClick={() => edit(row)}>Edit</button><button className="btn btn-danger" onClick={() => remove(row.id)}>Delete</button></div>; }} /><Modal open={open} onClose={() => setOpen(false)} title={form.id ? 'Edit Teacher' : 'Add Teacher'} max="max-w-5xl"><form onSubmit={save} className="space-y-4"><ImageInput label="Teacher Photo" storageFolder="teachers" value={form.photo_url} onChange={v => setForm({ ...form, photo_url: v })} /><div className="grid md:grid-cols-2 gap-4"><Field label="Full Name"><input className="input" required value={form.full_name} onChange={e => setForm({ ...form, full_name: e.target.value })} /></Field><Field label="Teacher EMIS Code"><input className="input" value={form.emis_code} onChange={e => setForm({ ...form, emis_code: e.target.value })} /></Field><Field label="Ghana Card"><input className="input" value={form.ghana_card} onChange={e => setForm({ ...form, ghana_card: e.target.value })} /></Field><Field label="Gender"><select className="select" value={form.gender} onChange={e => setForm({ ...form, gender: e.target.value })}>{GENDERS.map(x => <option key={x}>{x}</option>)}</select></Field><Field label="Date of Birth"><input type="date" className="input" value={form.dob} onChange={e => setForm({ ...form, dob: e.target.value })} /></Field><Field label="Qualification"><select className="select" value={form.qualification} onChange={e => setForm({ ...form, qualification: e.target.value })}>{QUALIFICATIONS.map(x => <option key={x}>{x}</option>)}</select></Field><Field label="Training Status"><select className="select" value={form.trained} onChange={e => setForm({ ...form, trained: e.target.value })}>{TRAINING_STATUS.map(x => <option key={x}>{x}</option>)}</select></Field><Field label="Primary Specialty"><input className="input" value={form.primary_specialty} onChange={e => setForm({ ...form, primary_specialty: e.target.value })} /></Field><Field label="Contact Address"><input className="input" value={form.contact_address} onChange={e => setForm({ ...form, contact_address: e.target.value })} /></Field><Field label="Staff Number"><input className="input" value={form.staff_number} readOnly placeholder="Auto generated by school name" /></Field></div><MultiCheckbox label="Assign Subjects" items={data.subjects} value={form.assigned_subject_ids} onChange={v => setForm({ ...form, assigned_subject_ids: v })} getLabel={s => `${s.name}${s.code ? ` (${s.code})` : ''}`} /><MultiCheckbox label="Assign Classes" items={data.classes} value={form.assigned_class_ids} onChange={v => setForm({ ...form, assigned_class_ids: v })} getLabel={c => fullClassName(c)} /><div className="flex justify-end gap-2"><button type="button" className="btn btn-secondary" onClick={() => setOpen(false)}>Cancel</button><button type="submit" className="btn btn-primary">Save Teacher</button></div></form></Modal></div>;
 }
 
 function StudentManagement() {
   const { data, updateCollection, notify } = React.useContext(DataContext); const [open, setOpen] = React.useState(false); const [form, setForm] = React.useState(emptyStudent);
   const promotionYear = latestAcademicYearFromGrades(data.grades);
+  const printStudents = () => openRecordsPrint({
+    school: data.schoolSettings,
+    title: 'Student Records Report',
+    subtitle: `Total Students: ${data.students.length}`,
+    columns: ['Student No','Full Name','Assigned Class','Gender','Date of Birth','Parent Full Name','Parent Contact','Relationship','Promotion Status','Account'],
+    rows: data.students.map(row => {
+      const cls = data.classes.find(x => x.id === row.class_id);
+      const promotion = evaluatePromotion(data, row, promotionYear);
+      return {
+        'Student No': row.student_number || '',
+        'Full Name': row.full_name || '',
+        'Assigned Class': fullClassName(cls),
+        'Gender': row.gender || '',
+        'Date of Birth': row.dob || '',
+        'Parent Full Name': row.parent_full_name || '',
+        'Parent Contact': row.parent_phone_contact || '',
+        'Relationship': row.relationship || '',
+        'Promotion Status': promotion.statusText || '',
+        'Account': row.account_active ? 'Active' : 'Inactive'
+      };
+    })
+  });
   const save = async e => { e.preventDefault(); const prefix = numberPrefix(data.schoolSettings.school_name, 'STU'); const selectedClass = data.classes.find(c => c.id === form.class_id); const payload = { ...form, id: form.id || uid(), student_number: form.student_number || `${prefix}${String(data.students.length + 2001).padStart(5,'0')}`, student_section: form.student_section || selectedClass?.section || '', account_active: form.account_active ?? true }; validateCollectionRecord('student', payload, data.students); await updateCollection('students', items => items.some(x => x.id === payload.id) ? items.map(x => x.id === payload.id ? payload : x) : [...items, payload]); setOpen(false); setForm(emptyStudent); };
   const edit = s => { setForm(s); setOpen(true); }; const remove = async id => { if (!confirmDeleteAction('this student record')) return; await updateCollection('students', items => items.filter(x => x.id !== id)); };
   const runAutoPromotion = async () => {
@@ -1529,7 +1683,7 @@ function StudentManagement() {
     }));
     notify('success', `Auto promotion completed for ${promotionYear}.`);
   };
-  return <div className="space-y-4"><SectionHeader title="Students Management" subtitle={`Term 3 promotion status is auto evaluated from ${promotionYear} results. Promoted students move to the next class when auto promotion is run.`} actions={<><PrintButton label="Print Students Records" /><button onClick={runAutoPromotion} className="btn btn-outline"><i className="fas fa-arrow-up-right-dots mr-2"></i>Run Term 3 Auto Promotion</button><button onClick={() => { setForm(emptyStudent); setOpen(true); }} className="btn btn-primary"><i className="fas fa-plus mr-2"></i>Add Student</button></>} /><Table columns={['Photo','Student No','Full Name','Assigned Class','Gender','Date of Birth','Parent Full Name','Parent Contact','Relationship','Promotion Status','Account','Actions']} rows={data.students} renderCell={(row,c) => { const cls = data.classes.find(x => x.id === row.class_id); const promotion = evaluatePromotion(data, row, promotionYear); if (c === 'Photo') return row.photo_url ? <img src={row.photo_url} className="w-10 h-10 rounded-full object-cover" /> : <i className="fas fa-user-circle text-2xl text-slate-400"></i>; if (c === 'Student No') return row.student_number; if (c === 'Full Name') return row.full_name; if (c === 'Assigned Class') return fullClassName(cls); if (c === 'Gender') return row.gender; if (c === 'Date of Birth') return row.dob; if (c === 'Parent Full Name') return row.parent_full_name; if (c === 'Parent Contact') return row.parent_phone_contact; if (c === 'Relationship') return row.relationship; if (c === 'Promotion Status') return <span className={`font-bold ${promotion.statusColor}`}>{promotion.statusText}</span>; if (c === 'Account') return <span className={`pill ${row.account_active ? 'online' : 'offline'}`}>{row.account_active ? 'Active' : 'Inactive'}</span>; if (c === 'Actions') return <div className="flex gap-2"><button className="btn btn-outline" onClick={() => edit(row)}>Edit</button><button className="btn btn-danger" onClick={() => remove(row.id)}>Delete</button></div>; }} /><Modal open={open} onClose={() => setOpen(false)} title={form.id ? 'Edit Student' : 'Add Student'}><form onSubmit={save} className="space-y-4"><ImageInput label="Student Photo" storageFolder="students" value={form.photo_url} onChange={v => setForm({ ...form, photo_url: v })} /><div className="grid md:grid-cols-2 gap-4"><Field label="Student Full Name"><input className="input" required value={form.full_name} onChange={e => setForm({ ...form, full_name: e.target.value })} /></Field><Field label="Student Number"><input className="input" value={form.student_number} readOnly placeholder="Auto generated by school name" /></Field><Field label="Assign Class"><select className="select" required value={form.class_id} onChange={e => { const cls = data.classes.find(c => c.id === e.target.value); setForm({ ...form, class_id: e.target.value, student_section: cls?.section || '' }); }}><option value="">Select class</option>{data.classes.map(cls => <option key={cls.id} value={cls.id}>{fullClassName(cls)}</option>)}</select></Field><Field label="Class Section or Stream"><input className="input" value={form.student_section} readOnly placeholder="Auto matches selected class structure" /></Field><Field label="Gender"><select className="select" value={form.gender} onChange={e => setForm({ ...form, gender: e.target.value })}>{GENDERS.map(x => <option key={x}>{x}</option>)}</select></Field><Field label="Date of Birth"><input type="date" className="input" value={form.dob} onChange={e => setForm({ ...form, dob: e.target.value })} /></Field><Field label="Parent Full Name"><input className="input" required value={form.parent_full_name} onChange={e => setForm({ ...form, parent_full_name: e.target.value })} /></Field><Field label="Parent Phone Contact"><input className="input" required value={form.parent_phone_contact} onChange={e => setForm({ ...form, parent_phone_contact: e.target.value })} /></Field><Field label="Relationship"><select className="select" value={form.relationship} onChange={e => setForm({ ...form, relationship: e.target.value })}>{RELATIONSHIPS.map(x => <option key={x}>{x}</option>)}</select></Field></div><div className="flex justify-end gap-2"><button type="button" className="btn btn-secondary" onClick={() => setOpen(false)}>Cancel</button><button type="submit" className="btn btn-primary">Save Student</button></div></form></Modal></div>;
+  return <div className="space-y-4"><SectionHeader title="Students Management" subtitle={`Term 3 promotion status is auto evaluated from ${promotionYear} results. Promoted students move to the next class when auto promotion is run.`} actions={<><PrintButton label="Print Students Records" onClick={printStudents} /><button onClick={runAutoPromotion} className="btn btn-outline"><i className="fas fa-arrow-up-right-dots mr-2"></i>Run Term 3 Auto Promotion</button><button onClick={() => { setForm(emptyStudent); setOpen(true); }} className="btn btn-primary"><i className="fas fa-plus mr-2"></i>Add Student</button></>} /><Table columns={['Photo','Student No','Full Name','Assigned Class','Gender','Date of Birth','Parent Full Name','Parent Contact','Relationship','Promotion Status','Account','Actions']} rows={data.students} renderCell={(row,c) => { const cls = data.classes.find(x => x.id === row.class_id); const promotion = evaluatePromotion(data, row, promotionYear); if (c === 'Photo') return row.photo_url ? <img src={row.photo_url} className="w-10 h-10 rounded-full object-cover" /> : <i className="fas fa-user-circle text-2xl text-slate-400"></i>; if (c === 'Student No') return row.student_number; if (c === 'Full Name') return row.full_name; if (c === 'Assigned Class') return fullClassName(cls); if (c === 'Gender') return row.gender; if (c === 'Date of Birth') return row.dob; if (c === 'Parent Full Name') return row.parent_full_name; if (c === 'Parent Contact') return row.parent_phone_contact; if (c === 'Relationship') return row.relationship; if (c === 'Promotion Status') return <span className={`font-bold ${promotion.statusColor}`}>{promotion.statusText}</span>; if (c === 'Account') return <span className={`pill ${row.account_active ? 'online' : 'offline'}`}>{row.account_active ? 'Active' : 'Inactive'}</span>; if (c === 'Actions') return <div className="flex gap-2"><button className="btn btn-outline" onClick={() => edit(row)}>Edit</button><button className="btn btn-danger" onClick={() => remove(row.id)}>Delete</button></div>; }} /><Modal open={open} onClose={() => setOpen(false)} title={form.id ? 'Edit Student' : 'Add Student'}><form onSubmit={save} className="space-y-4"><ImageInput label="Student Photo" storageFolder="students" value={form.photo_url} onChange={v => setForm({ ...form, photo_url: v })} /><div className="grid md:grid-cols-2 gap-4"><Field label="Student Full Name"><input className="input" required value={form.full_name} onChange={e => setForm({ ...form, full_name: e.target.value })} /></Field><Field label="Student Number"><input className="input" value={form.student_number} readOnly placeholder="Auto generated by school name" /></Field><Field label="Assign Class"><select className="select" required value={form.class_id} onChange={e => { const cls = data.classes.find(c => c.id === e.target.value); setForm({ ...form, class_id: e.target.value, student_section: cls?.section || '' }); }}><option value="">Select class</option>{data.classes.map(cls => <option key={cls.id} value={cls.id}>{fullClassName(cls)}</option>)}</select></Field><Field label="Class Section or Stream"><input className="input" value={form.student_section} readOnly placeholder="Auto matches selected class structure" /></Field><Field label="Gender"><select className="select" value={form.gender} onChange={e => setForm({ ...form, gender: e.target.value })}>{GENDERS.map(x => <option key={x}>{x}</option>)}</select></Field><Field label="Date of Birth"><input type="date" className="input" value={form.dob} onChange={e => setForm({ ...form, dob: e.target.value })} /></Field><Field label="Parent Full Name"><input className="input" required value={form.parent_full_name} onChange={e => setForm({ ...form, parent_full_name: e.target.value })} /></Field><Field label="Parent Phone Contact"><input className="input" required value={form.parent_phone_contact} onChange={e => setForm({ ...form, parent_phone_contact: e.target.value })} /></Field><Field label="Relationship"><select className="select" value={form.relationship} onChange={e => setForm({ ...form, relationship: e.target.value })}>{RELATIONSHIPS.map(x => <option key={x}>{x}</option>)}</select></Field></div><div className="flex justify-end gap-2"><button type="button" className="btn btn-secondary" onClick={() => setOpen(false)}>Cancel</button><button type="submit" className="btn btn-primary">Save Student</button></div></form></Modal></div>;
 }
 
 function ParentManagement() {
@@ -1808,6 +1962,26 @@ function PrincipalStudents() {
   const { data, updateCollection, notify } = React.useContext(DataContext); const [filterClass, setFilterClass] = React.useState('');
   const promotionYear = latestAcademicYearFromGrades(data.grades);
   const rows = data.students.filter(s => !filterClass || s.class_id === filterClass);
+  const printStudents = () => openRecordsPrint({
+    school: data.schoolSettings,
+    title: 'Student Records Report',
+    subtitle: `${filterClass ? `Filtered Class: ${fullClassName(data.classes.find(c => c.id === filterClass))}` : 'All Classes'} • Total Students: ${rows.length}`,
+    columns: ['Student No','Full Name','Assigned Class','Gender','Date of Birth','Parent Full Name','Parent Contact','Promotion Status','Account'],
+    rows: rows.map(row => {
+      const promotion = evaluatePromotion(data, row, promotionYear);
+      return {
+        'Student No': row.student_number || '',
+        'Full Name': row.full_name || '',
+        'Assigned Class': fullClassName(data.classes.find(x => x.id === row.class_id)),
+        'Gender': row.gender || '',
+        'Date of Birth': row.dob || '',
+        'Parent Full Name': row.parent_full_name || '',
+        'Parent Contact': row.parent_phone_contact || '',
+        'Promotion Status': promotion.statusText || '',
+        'Account': row.account_active ? 'Active' : 'Inactive'
+      };
+    })
+  });
   const runAutoPromotion = async () => {
     const term3Students = data.students.filter(student => evaluatePromotion(data, student, promotionYear).evaluated);
     if (!term3Students.length) { notify('info', `No Term 3 grades were found for ${promotionYear}.`); return; }
@@ -1818,20 +1992,37 @@ function PrincipalStudents() {
     }));
     notify('success', `Auto promotion completed for ${promotionYear}.`);
   };
-  return <div className="space-y-4"><SectionHeader title="Student Management" subtitle={`View only student records with real time class filtering. Term 3 promotion status is evaluated from ${promotionYear} results.`} actions={<><Field label=""><select className="select" value={filterClass} onChange={e => setFilterClass(e.target.value)}><option value="">All classes</option>{data.classes.map(c => <option key={c.id} value={c.id}>{fullClassName(c)}</option>)}</select></Field><button onClick={runAutoPromotion} className="btn btn-outline"><i className="fas fa-arrow-up-right-dots mr-2"></i>Run Term 3 Auto Promotion</button><PrintButton label="Print Students Records" /></>} /><Table columns={['Full Name','Student No','Assigned Class','Gender','Date of Birth','Parent Full Name','Parent Contact','Promotion Status','Account']} rows={rows} renderCell={(row,c) => { const promotion = evaluatePromotion(data, row, promotionYear); if (c === 'Full Name') return row.full_name; if (c === 'Student No') return row.student_number; if (c === 'Assigned Class') return fullClassName(data.classes.find(x => x.id === row.class_id)); if (c === 'Gender') return row.gender; if (c === 'Date of Birth') return row.dob; if (c === 'Parent Full Name') return row.parent_full_name; if (c === 'Parent Contact') return row.parent_phone_contact; if (c === 'Promotion Status') return <span className={`font-bold ${promotion.statusColor}`}>{promotion.statusText}</span>; if (c === 'Account') return <span className={`pill ${row.account_active ? 'online' : 'offline'}`}>{row.account_active ? 'Active' : 'Inactive'}</span>; }} /></div>;
+  return <div className="space-y-4"><SectionHeader title="Student Management" subtitle={`View only student records with real time class filtering. Term 3 promotion status is evaluated from ${promotionYear} results.`} actions={<><Field label=""><select className="select" value={filterClass} onChange={e => setFilterClass(e.target.value)}><option value="">All classes</option>{data.classes.map(c => <option key={c.id} value={c.id}>{fullClassName(c)}</option>)}</select></Field><button onClick={runAutoPromotion} className="btn btn-outline"><i className="fas fa-arrow-up-right-dots mr-2"></i>Run Term 3 Auto Promotion</button><PrintButton label="Print Students Records" onClick={printStudents} /></>} /><Table columns={['Full Name','Student No','Assigned Class','Gender','Date of Birth','Parent Full Name','Parent Contact','Promotion Status','Account']} rows={rows} renderCell={(row,c) => { const promotion = evaluatePromotion(data, row, promotionYear); if (c === 'Full Name') return row.full_name; if (c === 'Student No') return row.student_number; if (c === 'Assigned Class') return fullClassName(data.classes.find(x => x.id === row.class_id)); if (c === 'Gender') return row.gender; if (c === 'Date of Birth') return row.dob; if (c === 'Parent Full Name') return row.parent_full_name; if (c === 'Parent Contact') return row.parent_phone_contact; if (c === 'Promotion Status') return <span className={`font-bold ${promotion.statusColor}`}>{promotion.statusText}</span>; if (c === 'Account') return <span className={`pill ${row.account_active ? 'online' : 'offline'}`}>{row.account_active ? 'Active' : 'Inactive'}</span>; }} /></div>;
 }
 
 function PrincipalTeachers() {
   const { data, notify } = React.useContext(DataContext);
   const { session, setActiveNav } = React.useContext(SessionContext);
   const [chatTarget, setChatTarget] = React.useState('');
+  const printTeachers = () => openRecordsPrint({
+    school: data.schoolSettings,
+    title: 'Teacher Records Report',
+    subtitle: `Total Teachers: ${data.teachers.length}`,
+    columns: ['Full Name','Teacher EMIS Code','Assign Class','Primary Specialty','Qualification','Gender','Date of Birth','Training Status','Account'],
+    rows: data.teachers.map(row => ({
+      'Full Name': row.full_name || '',
+      'Teacher EMIS Code': row.emis_code || '',
+      'Assign Class': safeArray(row.assigned_class_ids).map(id => fullClassName(data.classes.find(cls => cls.id === id))).join(', '),
+      'Primary Specialty': row.primary_specialty || '',
+      'Qualification': row.qualification || '',
+      'Gender': row.gender || '',
+      'Date of Birth': row.dob || '',
+      'Training Status': row.trained || '',
+      'Account': row.account_active ? 'Active' : 'Inactive'
+    }))
+  });
   const openTeacherChat = (teacherId) => {
     const target = `teacher|${teacherId}`;
     setChatTarget(target);
     setActiveNav('chat');
     notify('info', 'Teacher chat opened.');
   };
-  return <div className="space-y-4"><SectionHeader title="Teacher Management Records" subtitle="View only teacher records reflected from School Admin changes." actions={<PrintButton label="Print Teachers Records" />} /><Table columns={['Full Name','Teacher EMIS Code','Assign Class','Primary Specialty','Qualification','Gender','Date of Birth','Training Status','Account','Chat']} rows={data.teachers} renderCell={(row,c) => { if (c === 'Full Name') return row.full_name; if (c === 'Teacher EMIS Code') return row.emis_code; if (c === 'Assign Class') return safeArray(row.assigned_class_ids).map(id => fullClassName(data.classes.find(cls => cls.id === id))).join(', '); if (c === 'Primary Specialty') return row.primary_specialty; if (c === 'Qualification') return row.qualification; if (c === 'Gender') return row.gender; if (c === 'Date of Birth') return row.dob; if (c === 'Training Status') return row.trained; if (c === 'Account') return <span className={`pill ${row.account_active ? 'online' : 'offline'}`}>{row.account_active ? 'Active' : 'Inactive'}</span>; if (c === 'Chat') return <button type="button" className="btn btn-outline" onClick={() => openTeacherChat(row.id)} title={`Chat with ${row.full_name}`}><i className="fas fa-comments text-emerald-600"></i></button>; }} />{chatTarget && <ChatManagement role="principal" linkedId={session.linkedId} initialReceiver={chatTarget} embeddedView />}</div>;
+  return <div className="space-y-4"><SectionHeader title="Teacher Management Records" subtitle="View only teacher records reflected from School Admin changes." actions={<PrintButton label="Print Teachers Records" onClick={printTeachers} />} /><Table columns={['Full Name','Teacher EMIS Code','Assign Class','Primary Specialty','Qualification','Gender','Date of Birth','Training Status','Account','Chat']} rows={data.teachers} renderCell={(row,c) => { if (c === 'Full Name') return row.full_name; if (c === 'Teacher EMIS Code') return row.emis_code; if (c === 'Assign Class') return safeArray(row.assigned_class_ids).map(id => fullClassName(data.classes.find(cls => cls.id === id))).join(', '); if (c === 'Primary Specialty') return row.primary_specialty; if (c === 'Qualification') return row.qualification; if (c === 'Gender') return row.gender; if (c === 'Date of Birth') return row.dob; if (c === 'Training Status') return row.trained; if (c === 'Account') return <span className={`pill ${row.account_active ? 'online' : 'offline'}`}>{row.account_active ? 'Active' : 'Inactive'}</span>; if (c === 'Chat') return <button type="button" className="btn btn-outline" onClick={() => openTeacherChat(row.id)} title={`Chat with ${row.full_name}`}><i className="fas fa-comments text-emerald-600"></i></button>; }} />{chatTarget && <ChatManagement role="principal" linkedId={session.linkedId} initialReceiver={chatTarget} embeddedView />}</div>;
 }
 
 function PrincipalAcademicPerformance() {
