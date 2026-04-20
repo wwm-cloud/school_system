@@ -80,8 +80,8 @@
   <div id="root"></div>
 
 <script type="text/babel">
-const SUPABASE_URL = 'https://luksrdtldarodaopqtcy.supabase.co';
-const SUPABASE_ANON_KEY = 'sb_publishable_MCHTDh35azWfpsbPaknkOA_Fi-7V1ih';
+const SUPABASE_URL = 'https://YOUR_PROJECT.supabase.co';
+const SUPABASE_ANON_KEY = 'YOUR_SUPABASE_ANON_KEY';
 const hasSupabaseCreds = !SUPABASE_URL.includes('YOUR_PROJECT') && !SUPABASE_ANON_KEY.includes('YOUR_SUPABASE');
 const supabase = hasSupabaseCreds ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
 const offlineStore = localforage.createInstance({ name: 'school_mgmt_final_v1' });
@@ -434,26 +434,36 @@ function getSchoolPrintIdentity(school={}) {
     logoUrl: school?.logo_url || ''
   };
 }
+function escapePrintHtml(value='') {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 function buildSchoolIdentityHeaderHtml(school={}, title='School Report', subtitle='') {
   const identity = getSchoolPrintIdentity(school);
-  const logoHtml = identity.logoUrl
-    ? `<img src="${identity.logoUrl}" style="width:68px;height:68px;object-fit:cover;border-radius:16px;border:2px solid #0f766e;background:#fff;" />`
+  const safeLogoUrl = String(identity.logoUrl || '').trim();
+  const logoHtml = safeLogoUrl
+    ? `<img src="${safeLogoUrl}" style="width:68px;height:68px;object-fit:cover;border-radius:16px;border:2px solid #0f766e;background:#fff;" onerror="this.style.display='none'" />`
     : `<div style="width:68px;height:68px;border-radius:16px;border:2px solid #0f766e;background:#ccfbf1;display:flex;align-items:center;justify-content:center;font-weight:800;color:#115e59;">SMS</div>`;
-  return `<div class="report-head"><div class="report-head-top">${logoHtml}<div class="report-school-center"><div class="report-school-name">${identity.name}</div><div class="report-school-sub">${identity.addressLine || 'School record printout'}</div><div class="report-school-sub">${identity.contact || ''}</div></div>${logoHtml}</div><div class="report-title">${title}</div>${subtitle ? `<div class="report-title-sub">${subtitle}</div>` : ''}</div>`;
+  return `<div class="report-head"><div class="report-head-top">${logoHtml}<div class="report-school-center"><div class="report-school-name">${escapePrintHtml(identity.name)}</div><div class="report-school-sub">${escapePrintHtml(identity.addressLine || 'School record printout')}</div><div class="report-school-sub">${escapePrintHtml(identity.contact || '')}</div></div>${logoHtml}</div><div class="report-title">${escapePrintHtml(title)}</div>${subtitle ? `<div class="report-title-sub">${escapePrintHtml(subtitle)}</div>` : ''}</div>`;
 }
 function buildRecordsPrintHtml({ school, title, subtitle='', columns=[], rows=[] }) {
   const safeColumns = safeArray(columns);
   const safeRows = safeArray(rows);
   const headerHtml = buildSchoolIdentityHeaderHtml(school, title, subtitle);
-  const tableHead = safeColumns.map(col => `<th>${col}</th>`).join('');
+  const tableHead = safeColumns.map(col => `<th>${escapePrintHtml(col)}</th>`).join('');
   const tableRows = safeRows.length
-    ? safeRows.map(row => `<tr>${safeColumns.map(col => `<td>${row[col] ?? ''}</td>`).join('')}</tr>`).join('')
+    ? safeRows.map(row => `<tr>${safeColumns.map(col => `<td>${escapePrintHtml(row?.[col] ?? '')}</td>`).join('')}</tr>`).join('')
     : `<tr><td colspan="${Math.max(safeColumns.length, 1)}">No records available.</td></tr>`;
   return `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8" />
-<title>${title}</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>${escapePrintHtml(title)}</title>
 <style>
   * { box-sizing: border-box; font-family: Arial, sans-serif; }
   body { margin: 0; background: #f3f4f6; color: #0f172a; }
@@ -480,20 +490,33 @@ function buildRecordsPrintHtml({ school, title, subtitle='', columns=[], rows=[]
       <thead><tr>${tableHead}</tr></thead>
       <tbody>${tableRows}</tbody>
     </table>
-    <div class="footnote">Generated on ${new Date().toLocaleString()}</div>
+    <div class="footnote">Generated on ${escapePrintHtml(new Date().toLocaleString())}</div>
   </div>
 </body>
 </html>`;
 }
 function openRecordsPrint(payload) {
   const html = buildRecordsPrintHtml(payload);
-  const win = window.open('', '_blank', 'width=1400,height=900');
+  const win = window.open('', '_blank', 'noopener=no,width=1400,height=900');
   if (!win) return;
-  win.document.open();
-  win.document.write(html);
-  win.document.close();
-  win.focus();
-  setTimeout(() => { try { win.print(); } catch (e) {} }, 450);
+  try {
+    win.document.open();
+    win.document.write(html);
+    win.document.close();
+    const triggerPrint = () => {
+      try {
+        win.focus();
+        window.setTimeout(() => {
+          try { win.print(); } catch (e) {}
+        }, 700);
+      } catch (e) {}
+    };
+    if (win.document.readyState === 'complete') triggerPrint();
+    else win.addEventListener('load', triggerPrint, { once: true });
+    window.setTimeout(triggerPrint, 1200);
+  } catch (e) {
+    console.error('Record print failed', e);
+  }
 }
 function useAudioNotifications() {
   const ctxRef = React.useRef(null);
