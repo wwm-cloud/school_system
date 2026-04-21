@@ -881,6 +881,14 @@ async function persistFeeMetaRecord(record={}) {
   };
   await writeFeeMetaStore(next);
 }
+async function deleteFeeMetaRecord(recordId='') {
+  if (!recordId) return;
+  const current = await readFeeMetaStore();
+  if (!current || !current[recordId]) return;
+  const next = { ...current };
+  delete next[recordId];
+  await writeFeeMetaStore(next);
+}
 function mergeFeeMetaIntoFees(rows=[], feeMetaMap={}) {
   return safeArray(rows).map(row => {
     const meta = feeMetaMap?.[row.id] || {};
@@ -2244,6 +2252,19 @@ function FeePayments({ officer }) {
     setOpen(true);
   };
 
+  const removeFeeRecord = async row => {
+    const studentName = data.students.find(x => x.id === row.student_id)?.full_name || 'this student';
+    const okay = window.confirm(`Delete this fee payment record for ${studentName} in ${row.term} ${row.academic_year}? This action cannot be undone.`);
+    if (!okay) return;
+    await deleteFeeMetaRecord(row.id);
+    await updateCollection('fees', items => items.filter(item => item.id !== row.id));
+    notify('success', 'Fee record deleted successfully.');
+    if (form.id === row.id) {
+      setOpen(false);
+      setForm(emptyFee);
+    }
+  };
+
   const save = async e => {
     e.preventDefault();
     const due = Math.max(0, Number(form.amount_due || 0));
@@ -2307,7 +2328,7 @@ function FeePayments({ officer }) {
       if (c === 'Recorded') return formatDateTime(row.recorded_at);
       if (c === 'Updated') return formatDateTime(row.updated_at);
       if (c === 'Method') return row.payment_method;
-      if (c === 'Actions') return <div className="flex gap-2"><button className="btn btn-outline" onClick={() => openEdit(row)}><i className="fas fa-pen mr-2"></i>Update</button><button className="btn btn-outline" onClick={printCurrent}>Print</button></div>;
+      if (c === 'Actions') return <div className="flex gap-2 flex-wrap"><button className="btn btn-outline" onClick={() => openEdit(row)}><i className="fas fa-pen mr-2"></i>Update</button><button className="btn btn-outline" onClick={printCurrent}>Print</button><button className="btn btn-danger" onClick={() => removeFeeRecord(row)}><i className="fas fa-trash mr-2"></i>Delete</button></div>;
     }} />
     <Modal open={open} onClose={() => setOpen(false)} title={editing ? 'Update Fee Payment' : 'Add Fee Payment'}>
       <form onSubmit={save} className="space-y-4">
