@@ -80,8 +80,8 @@
   <div id="root"></div>
 
 <script type="text/babel">
-const SUPABASE_URL = 'https://luksrdtldarodaopqtcy.supabase.co';
-const SUPABASE_ANON_KEY = 'sb_publishable_MCHTDh35azWfpsbPaknkOA_Fi-7V1ih';
+const SUPABASE_URL = 'https://YOUR_PROJECT.supabase.co';
+const SUPABASE_ANON_KEY = 'YOUR_SUPABASE_ANON_KEY';
 const hasSupabaseCreds = !SUPABASE_URL.includes('YOUR_PROJECT') && !SUPABASE_ANON_KEY.includes('YOUR_SUPABASE');
 const supabase = hasSupabaseCreds ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
 const offlineStore = localforage.createInstance({ name: 'school_mgmt_final_v1' });
@@ -229,6 +229,29 @@ function confirmDeleteAction(label='this record') {
 function isValidPhone(value='') {
   const digits = String(value || '').replace(/\D/g, '');
   return digits.length >= 9 && digits.length <= 15;
+}
+function normalizePhoneNumber(value='') {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  let digits = raw.replace(/\D/g, '');
+  if (!digits) return '';
+  if (digits.startsWith('00')) digits = digits.slice(2);
+  if (digits.startsWith('0') && digits.length === 10) return `+233${digits.slice(1)}`;
+  if (digits.startsWith('233')) return `+${digits}`;
+  if (digits.length === 9) return `+233${digits}`;
+  if (raw.startsWith('+')) return `+${digits}`;
+  return `+${digits}`;
+}
+function getSmsLink(phone='', message='') {
+  const normalized = normalizePhoneNumber(phone) || String(phone || '').trim();
+  const encoded = encodeURIComponent(message || '');
+  return `sms:${normalized}${encoded ? `?body=${encoded}` : ''}`;
+}
+function getWhatsAppLink(phone='', message='') {
+  const normalized = normalizePhoneNumber(phone).replace(/\D/g, '');
+  const encoded = encodeURIComponent(message || '');
+  if (!normalized) return '#';
+  return `https://wa.me/${normalized}${encoded ? `?text=${encoded}` : ''}`;
 }
 function exportToCsv(filename, rows) {
   if (!rows || !rows.length) return;
@@ -1578,7 +1601,7 @@ function Sidebar() {
     else if (session.role === 'teacher') navItems = [['dashboard', 'Dashboard', 'tachometer-alt'], ['students', 'Student Management', 'users'], ['attendance', 'Attendance Records', 'calendar-check'], ['grades', 'Grades', 'star'], ['timetable', 'Timetable', 'clock'], ['chat', 'System Chat', 'comments'], ['profile', 'My Profile', 'image']];
     else if (session.role === 'student') navItems = [['dashboard', 'Dashboard', 'tachometer-alt'], ['grades', 'Grades', 'star'], ['attendance', 'Attendance Records', 'calendar'], ['fees', 'Fee Payments', 'money-bill-wave'], ['timetable', 'Timetable', 'clock'], ['chat', 'System Chat', 'comments']];
     else if (session.role === 'parent') navItems = [['dashboard', 'Dashboard', 'tachometer-alt'], ['grades', 'Grades', 'star'], ['attendance', 'Attendance Records', 'calendar'], ['fees', 'Fee Payments', 'money-bill-wave'], ['chat', 'System Chat', 'comments']];
-    else if (session.role === 'accountant') navItems = [['dashboard', 'Dashboard', 'tachometer-alt'], ['fees', 'Fee Payments', 'hand-holding-usd'], ['statements', 'Fees Statement', 'file-invoice'], ['gradelock', 'Grades Lock Control', 'lock']];
+    else if (session.role === 'accountant') navItems = [['dashboard', 'Dashboard', 'tachometer-alt'], ['fees', 'Fee Payments', 'hand-holding-usd'], ['statements', 'Fees Statement', 'file-invoice'], ['parentcontacts', 'Parent Contacts', 'address-book'], ['gradelock', 'Grades Lock Control', 'lock']];
     else if (session.role === 'principal') navItems = [['dashboard', 'Dashboard', 'tachometer-alt'], ['students', 'Student Management', 'user-graduate'], ['teachers', 'Teacher Management', 'chalkboard-user'], ['academic', 'Academic Performance', 'chart-line'], ['attendance', 'Attendance Summary', 'calendar-alt'], ['chat', 'System Chat', 'comments']];
     return session.role ? [...navItems, ['logout', 'Logout', 'sign-out-alt']] : navItems;
   }, [session.role]);
@@ -1945,11 +1968,69 @@ function ParentDashboard({ activeNav }) {
 
 function AccountantDashboard({ activeNav }) {
   const { data } = React.useContext(DataContext); const { session } = React.useContext(SessionContext); const officer = data.accountStaff.find(a => a.id === session.linkedId) || data.accountStaff[0]; if (!officer) return <EmptyState text="No accounts officer record found." />;
-  if (activeNav === 'dashboard') { const owing = data.fees.filter(f => Number(f.balance || 0) > 0).length; return <div className="space-y-6"><SectionHeader title={`Welcome, ${officer.full_name}`} subtitle="Accounts Office Staff dashboard for fees, statements, and grades lock control." actions={<RoleStatusDot online={data.presence.accountant?.online} label="Accounts Status" />} /><div className="grid-fit"><StatCard label="Fee Records" value={data.fees.length} icon="file-invoice-dollar" accent="emerald" /><StatCard label="Students Owing Fees" value={owing} icon="money-bill-wave" accent="rose" /><StatCard label="Classes" value={data.classes.length} icon="layer-group" accent="blue" /></div></div>; }
+  if (activeNav === 'dashboard') {
+    const owing = data.fees.filter(f => Number(f.balance || 0) > 0).length;
+    const parentContactCount = data.students.filter(s => !!String(s.parent_phone_contact || '').trim()).length;
+    return <div className="space-y-6"><SectionHeader title={`Welcome, ${officer.full_name}`} subtitle="Accounts Office Staff dashboard for fees, statements, grades lock control, and parent contact follow up." actions={<RoleStatusDot online={data.presence.accountant?.online} label="Accounts Status" />} /><div className="grid-fit"><StatCard label="Fee Records" value={data.fees.length} icon="file-invoice-dollar" accent="emerald" /><StatCard label="Students Owing Fees" value={owing} icon="money-bill-wave" accent="rose" /><StatCard label="Classes" value={data.classes.length} icon="layer-group" accent="blue" /><StatCard label="Parent Contacts" value={parentContactCount} icon="address-book" accent="amber" /></div><div className="card p-5 border border-amber-200 bg-amber-50 text-amber-900"><div className="font-bold text-base mb-2">Parent messaging notice</div><p className="text-sm leading-6">Direct free online SMS to any mobile phone is not available from a normal browser based school system without a telecom gateway or other third party SMS provider, and those services are normally paid. This update adds a no paid service contact workflow with linked parent contacts, one tap SMS app opening, WhatsApp web messaging, click to call, and message copy actions for faster follow up.</p></div></div>;
+  }
   if (activeNav === 'fees') return <FeePayments officer={officer} />;
   if (activeNav === 'statements') return <FeesStatement />;
+  if (activeNav === 'parentcontacts') return <AccountantParentContacts officer={officer} />;
   if (activeNav === 'gradelock') return <GradeLockControl />;
   return null;
+}
+
+
+function AccountantParentContacts({ officer }) {
+  const { data, notify } = React.useContext(DataContext);
+  const [filterClass, setFilterClass] = React.useState('');
+  const [search, setSearch] = React.useState('');
+  const [message, setMessage] = React.useState("Dear Parent, please contact the Accounts Office concerning your child's school record. Thank you.");
+  const rows = data.students
+    .filter(student => !filterClass || student.class_id === filterClass)
+    .filter(student => {
+      const q = search.trim().toLowerCase();
+      if (!q) return true;
+      const cls = fullClassName(data.classes.find(c => c.id === student.class_id)).toLowerCase();
+      return [student.full_name, student.student_number, student.parent_full_name, student.parent_phone_contact, cls].filter(Boolean).join(' ').toLowerCase().includes(q);
+    })
+    .map(student => {
+      const feeRows = data.fees.filter(f => f.student_id === student.id);
+      const totalBalance = feeRows.reduce((sum, row) => sum + Number(row.balance || 0), 0);
+      const parent = data.parents.find(p => safeArray(p.linked_student_ids).includes(student.id) || ((p.full_name || '').trim().toLowerCase() === (student.parent_full_name || '').trim().toLowerCase() && (p.phone_contact || '').trim() === (student.parent_phone_contact || '').trim()));
+      return {
+        ...student,
+        parent_record_id: parent?.id || '',
+        parent_phone: student.parent_phone_contact || parent?.phone_contact || '',
+        linked_parent_name: student.parent_full_name || parent?.full_name || '',
+        relationship_label: student.relationship || parent?.relationship || '',
+        class_label: fullClassName(data.classes.find(c => c.id === student.class_id)),
+        total_balance: totalBalance,
+        status_label: totalBalance > 0 ? 'Owing' : 'Clear'
+      };
+    });
+  const copyMessage = async row => {
+    const text = `${message} Student: ${row.full_name}. Class: ${row.class_label || 'Not Assigned'}.`;
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        notify('success', `Message copied for ${row.linked_parent_name || row.full_name}.`);
+        return;
+      }
+    } catch (e) {}
+    try {
+      const area = document.createElement('textarea');
+      area.value = text;
+      document.body.appendChild(area);
+      area.select();
+      document.execCommand('copy');
+      document.body.removeChild(area);
+      notify('success', `Message copied for ${row.linked_parent_name || row.full_name}.`);
+    } catch (e) {
+      notify('error', 'Unable to copy message on this device.');
+    }
+  };
+  return <div className="space-y-4"><SectionHeader title="Parent Contacts for Accounts Follow Up" subtitle="Student records are linked with parent phone contacts for quick communication. Use SMS App to open the device message composer, WhatsApp for free internet based messaging where available, or Call for direct phone follow up." actions={<><Field label=""><select className="select" value={filterClass} onChange={e => setFilterClass(e.target.value)}><option value="">All classes</option>{data.classes.map(c => <option key={c.id} value={c.id}>{fullClassName(c)}</option>)}</select></Field><Field label=""><input className="input" placeholder="Search student, parent, number, or class" value={search} onChange={e => setSearch(e.target.value)} /></Field></>} /><div className="card p-4 space-y-3"><div className="font-semibold text-slate-700">Quick message template</div><textarea className="textarea" rows="3" value={message} onChange={e => setMessage(e.target.value)}></textarea><div className="text-xs text-slate-500">SMS App uses the phone's normal SMS composer and may still depend on the sender's mobile network charges. WhatsApp uses internet data and is free only when the parent also uses WhatsApp.</div></div><Table columns={['Student','Student No','Class','Parent Name','Parent Contact','Relationship','Outstanding Balance','Contact Status','Actions']} rows={rows} renderCell={(row,c) => { if (c === 'Student') return row.full_name; if (c === 'Student No') return row.student_number; if (c === 'Class') return row.class_label; if (c === 'Parent Name') return row.linked_parent_name; if (c === 'Parent Contact') return row.parent_phone || ''; if (c === 'Relationship') return row.relationship_label; if (c === 'Outstanding Balance') return `GHS ${Number(row.total_balance || 0).toFixed(2)}`; if (c === 'Contact Status') return <span className={`pill ${row.parent_phone ? 'online' : 'absent'}`}>{row.parent_phone ? 'Ready' : 'No Number'}</span>; if (c === 'Actions') { const smsText = `${message} Student: ${row.full_name}. Class: ${row.class_label || 'Not Assigned'}.`; const smsLink = getSmsLink(row.parent_phone, smsText); const whatsappLink = getWhatsAppLink(row.parent_phone, smsText); const canContact = !!String(row.parent_phone || '').trim(); return <div className="flex flex-wrap gap-2">{canContact ? <a className="btn btn-outline !px-3 !py-2 text-sm" href={smsLink}><i className="fas fa-comment-sms mr-2"></i>SMS App</a> : <button className="btn btn-outline !px-3 !py-2 text-sm" disabled>SMS App</button>}{canContact ? <a className="btn btn-outline !px-3 !py-2 text-sm" href={whatsappLink} target="_blank" rel="noreferrer"><i className="fab fa-whatsapp mr-2"></i>WhatsApp</a> : <button className="btn btn-outline !px-3 !py-2 text-sm" disabled>WhatsApp</button>}{canContact ? <a className="btn btn-outline !px-3 !py-2 text-sm" href={`tel:${row.parent_phone}`}><i className="fas fa-phone mr-2"></i>Call</a> : <button className="btn btn-outline !px-3 !py-2 text-sm" disabled>Call</button>}<button className="btn btn-primary !px-3 !py-2 text-sm" onClick={() => copyMessage(row)}><i className="fas fa-copy mr-2"></i>Copy Msg</button></div>; } return ''; }} /></div>;
 }
 
 function FeePayments({ officer }) {
