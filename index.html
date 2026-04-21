@@ -161,7 +161,7 @@ function evaluatePromotion(data, student, academicYear='') {
   return { year, evaluated: true, promoted, statusText, statusColor: promoted ? 'text-green-700' : 'text-red-700', reportColor: promoted ? '#15803d' : '#b91c1c', currentClass, nextClass, average: Number(average.toFixed(1)), rows: term3Rows };
 }
 
-async function runAutoPromotionAcrossRecords({ data, updateCollection, notify, academicYear='' }) {
+async function runAutoPromotionAcrossRecords({ data, updateCollection, notify, addArchiveRecord, academicYear='' }) {
   const year = academicYear || latestAcademicYearFromGrades(data?.grades || []);
   const promotedMap = new Map();
   safeArray(data?.students).forEach(student => {
@@ -175,6 +175,23 @@ async function runAutoPromotionAcrossRecords({ data, updateCollection, notify, a
     return;
   }
 
+  for (const [studentId, next] of promotedMap.entries()) {
+    const student = safeArray(data.students).find(item => item.id === studentId);
+    if (!student) continue;
+    const archivedGrades = safeArray(data.grades).filter(row => row.student_id === studentId && row.class_id === student.class_id);
+    const archivedAttendance = safeArray(data.attendance).filter(row => row.student_id === studentId && row.class_id === student.class_id);
+    const archivedFees = safeArray(data.fees).filter(row => row.student_id === studentId && row.class_id === student.class_id);
+    await addArchiveRecord(createArchiveEntry({
+      student,
+      previousClassId: student.class_id || '',
+      promotedClassId: next.nextClassId || '',
+      academicYear: year,
+      grades: archivedGrades,
+      attendance: archivedAttendance,
+      fees: archivedFees
+    }));
+  }
+
   await updateCollection('students', items => items.map(student => {
     const next = promotedMap.get(student.id);
     return next ? { ...student, class_id: next.nextClassId, student_section: next.nextSection } : student;
@@ -182,20 +199,20 @@ async function runAutoPromotionAcrossRecords({ data, updateCollection, notify, a
 
   await updateCollection('grades', items => items.map(row => {
     const next = promotedMap.get(row.student_id);
-    return next ? { ...row, class_id: next.nextClassId } : row;
+    return next && row.class_id === safeArray(data.students).find(student => student.id === row.student_id)?.class_id ? { ...row, class_id: next.nextClassId } : row;
   }), { silentSuccess: true });
 
   await updateCollection('attendance', items => items.map(row => {
     const next = promotedMap.get(row.student_id);
-    return next ? { ...row, class_id: next.nextClassId } : row;
+    return next && row.class_id === safeArray(data.students).find(student => student.id === row.student_id)?.class_id ? { ...row, class_id: next.nextClassId } : row;
   }), { silentSuccess: true });
 
   await updateCollection('fees', items => items.map(row => {
     const next = promotedMap.get(row.student_id);
-    return next ? { ...row, class_id: next.nextClassId } : row;
+    return next && row.class_id === safeArray(data.students).find(student => student.id === row.student_id)?.class_id ? { ...row, class_id: next.nextClassId } : row;
   }), { silentSuccess: true });
 
-  notify('success', `${promotedMap.size} student(s) were auto promoted and all linked class records were updated to the promoted current class for ${year}.`);
+  notify('success', `${promotedMap.size} student(s) were auto promoted. Their previous class linked records were archived and can now be restored or permanently deleted by the School Admin only.`);
 }
 const slugBase = (name='') => name.toLowerCase().trim().replace(/[^a-z0-9]+/g, '.').replace(/^\.+|\.+$/g, '') || 'user';
 const generatePassword = () => Math.random().toString(36).slice(-8) + Math.floor(Math.random() * 90 + 10);
@@ -860,6 +877,7 @@ const LIGHT_OFFLINE_CACHE_KEY = 'school_management_light_cache_v1';
 const LIGHT_OFFLINE_QUEUE_KEY = 'school_management_light_queue_v1';
 const LIGHT_OFFLINE_META_KEY = 'school_management_light_meta_v1';
 const FEE_META_CACHE_KEY = 'school_management_fee_meta_v1';
+const ARCHIVE_RECORDS_KEY = 'school_management_archive_records_v1';
 function clonePlain(value) {
   try { return JSON.parse(JSON.stringify(value)); } catch (e) { return value; }
 }
@@ -897,6 +915,32 @@ async function appendOfflineQueue(entry) {
 }
 async function readOfflineMeta() {
   try { return (await offlineStore.getItem(LIGHT_OFFLINE_META_KEY)) || {}; } catch (e) { return {}; }
+}
+async function readArchiveRecords() {
+  try {
+    const value = await offlineStore.getItem(ARCHIVE_RECORDS_KEY);
+    return Array.isArray(value) ? value : [];
+  } catch (e) { return []; }
+}
+async function writeArchiveRecords(records=[]) {
+  try { await offlineStore.setItem(ARCHIVE_RECORDS_KEY, clonePlain(Array.isArray(records) ? records : [])); } catch (e) {}
+}
+function createArchiveEntry({ student, previousClassId='', promotedClassId='', academicYear='', grades=[], attendance=[], fees=[] }) {
+  return {
+    id: uid(),
+    student_id: student?.id || '',
+    student_name: student?.full_name || '',
+    student_number: student?.student_number || '',
+    academic_year: academicYear || '',
+    previous_class_id: previousClassId || '',
+    promoted_class_id: promotedClassId || '',
+    archived_at: new Date().toISOString(),
+    status: 'Archived',
+    student_snapshot: clonePlain(student || {}),
+    grades: clonePlain(grades || []),
+    attendance: clonePlain(attendance || []),
+    fees: clonePlain(fees || [])
+  };
 }
 async function readFeeMetaStore() {
   try { return (await offlineStore.getItem(FEE_META_CACHE_KEY)) || {}; } catch (e) { return {}; }
@@ -948,7 +992,7 @@ const SessionContext = React.createContext(null);
 
 const EMPTY_LIVE_DATA = {
   schoolSettings: defaultSchool,
-  principals: [], teachers: [], students: [], parents: [], accountStaff: [], classes: [], subjects: [], timetable: [], attendance: [], grades: [], fees: [], credentials: [], chats: [], presenceRows: [],
+  principals: [], teachers: [], students: [], parents: [], accountStaff: [], classes: [], subjects: [], timetable: [], attendance: [], grades: [], fees: [], archiveRecords: [], credentials: [], chats: [], presenceRows: [],
   presence: {
     admin: { online: false, name: 'School Admin' },
     teacher: { online: false, name: 'Teacher' },
@@ -1304,20 +1348,23 @@ function usePersistentSchoolData() {
       const meta = await readOfflineMeta();
       const cached = await readOfflineCache();
       if (!supabase) {
-        const next = cached || seedData();
+        const archiveRecords = await readArchiveRecords();
+        const next = { ...(cached || seedData()), archiveRecords };
         setData(next);
         await saveSnapshot(next, { lastSyncAt: meta.lastSyncAt || new Date().toISOString() });
         setOfflineState(prev => ({ ...prev, isOnline: browserOnline(), hasCache: !!cached, pendingCount: queue.length, lastSyncAt: meta.lastSyncAt || '' }));
         return;
       }
       if (!browserOnline()) {
-        const next = cached || seedData();
+        const archiveRecords = await readArchiveRecords();
+        const next = { ...(cached || seedData()), archiveRecords };
         setData(next);
         setOfflineState(prev => ({ ...prev, isOnline: false, hasCache: !!cached, pendingCount: queue.length, lastSyncAt: meta.lastSyncAt || meta.cachedAt || '' }));
         if (!silent && cached) notifyOnce('offline-cache-open', 'info', 'Offline mode active. Showing locally saved data.');
         return;
       }
-      const next = await fetchAllSchoolData();
+      const archiveRecords = await readArchiveRecords();
+      const next = { ...(await fetchAllSchoolData()), archiveRecords };
       setData(next);
       const nowIso = new Date().toISOString();
       await writeOfflineCache(next, { lastSyncAt: nowIso, pendingCount: queue.length });
@@ -1326,7 +1373,8 @@ function usePersistentSchoolData() {
       console.error('Failed to load live school data', error);
       const cached = await readOfflineCache();
       const meta = await readOfflineMeta();
-      const next = cached || seedData();
+      const archiveRecords = await readArchiveRecords();
+      const next = { ...(cached || seedData()), archiveRecords };
       setData(next);
       setOfflineState(prev => ({ ...prev, isOnline: browserOnline(), hasCache: !!cached, lastSyncAt: meta.lastSyncAt || meta.cachedAt || prev.lastSyncAt }));
       if (!silent) notifyOnce('live-load-failed', cached ? 'info' : 'error', cached ? 'Live data is unavailable. Last saved local data was opened.' : (error?.message || 'Failed to load live school data.'));
@@ -1351,7 +1399,8 @@ function usePersistentSchoolData() {
         else if (entry?.type === 'collection') await syncCollectionByKey(entry.key, entry.prevItems || [], entry.nextItems || []);
       }
       await writeOfflineQueue([]);
-      const fresh = await fetchAllSchoolData();
+      const archiveRecords = await readArchiveRecords();
+      const fresh = { ...(await fetchAllSchoolData()), archiveRecords };
       const nowIso = new Date().toISOString();
       setData(fresh);
       await writeOfflineCache(fresh, { lastSyncAt: nowIso, pendingCount: 0 });
@@ -1500,7 +1549,19 @@ function usePersistentSchoolData() {
     try { await syncPresenceStatus(role, linkedId, isOnline); } catch (error) { console.error('Presence sync failed', error); }
   }, [data, offlineState.lastSyncAt]);
 
-  return { data, loaded, persist, updateCollection, setSchoolSettings, reloadData, setPresenceStatus, notify, notifications, dismissNotification, busyText, offlineState, flushPendingChanges };
+  const addArchiveRecord = React.useCallback(async archiveEntry => {
+    const nextRecords = [clonePlain(archiveEntry), ...safeArray(data.archiveRecords)];
+    await writeArchiveRecords(nextRecords);
+    setData(prev => ({ ...prev, archiveRecords: nextRecords }));
+  }, [data.archiveRecords]);
+
+  const removeArchiveRecord = React.useCallback(async archiveId => {
+    const nextRecords = safeArray(data.archiveRecords).filter(item => item.id !== archiveId);
+    await writeArchiveRecords(nextRecords);
+    setData(prev => ({ ...prev, archiveRecords: nextRecords }));
+  }, [data.archiveRecords]);
+
+  return { data, loaded, persist, updateCollection, setSchoolSettings, reloadData, setPresenceStatus, notify, notifications, dismissNotification, busyText, offlineState, flushPendingChanges, addArchiveRecord, removeArchiveRecord };
 }
 
 function Modal({ open, title, onClose, children, max='max-w-4xl' }) { if (!open) return null; return <div className="fixed inset-0 modal-backdrop z-50 flex items-center justify-center p-4"><div className={`bg-white rounded-2xl w-full ${max} max-h-[92vh] overflow-auto shadow-2xl`}><div className="sticky top-0 bg-white border-b px-5 py-4 flex items-center justify-between"><h3 className="text-xl font-bold">{title}</h3><button onClick={onClose} className="text-slate-500 hover:text-red-600"><i className="fas fa-times text-xl"></i></button></div><div className="p-5">{children}</div></div></div>; }
@@ -1796,7 +1857,7 @@ function Sidebar() {
   const unreadChatCount = React.useMemo(() => getUnreadChatCount(data.chats, session.role, session.linkedId), [data.chats, session.role, session.linkedId]);
   const items = React.useMemo(() => {
     let navItems = [];
-    if (session.role === 'admin') navItems = [['dashboard', 'Dashboard', 'tachometer-alt'], ['principals', 'Principal Management', 'crown'], ['teachers', 'Teachers Management', 'chalkboard-user'], ['students', 'Students Management', 'user-graduate'], ['parents', 'Parents Management', 'users'], ['accountstaff', 'Account Office Staff', 'calculator'], ['classes', 'Classes Management', 'layer-group'], ['subjects', 'Subjects Management', 'book'], ['timetable', 'Timetable Management', 'clock'], ['accounts', 'Accounts & Credentials', 'key'], ['chat', 'System Chat', 'comments'], ['settings', 'School Logo & Details', 'cog']];
+    if (session.role === 'admin') navItems = [['dashboard', 'Dashboard', 'tachometer-alt'], ['principals', 'Principal Management', 'crown'], ['teachers', 'Teachers Management', 'chalkboard-user'], ['students', 'Students Management', 'user-graduate'], ['parents', 'Parents Management', 'users'], ['accountstaff', 'Account Office Staff', 'calculator'], ['classes', 'Classes Management', 'layer-group'], ['subjects', 'Subjects Management', 'book'], ['timetable', 'Timetable Management', 'clock'], ['accounts', 'Accounts & Credentials', 'key'], ['archive', 'Archive Records', 'box-archive'], ['chat', 'System Chat', 'comments'], ['settings', 'School Logo & Details', 'cog']];
     else if (session.role === 'teacher') navItems = [['dashboard', 'Dashboard', 'tachometer-alt'], ['students', 'Student Management', 'users'], ['attendance', 'Attendance Records', 'calendar-check'], ['grades', 'Grades', 'star'], ['timetable', 'Timetable', 'clock'], ['chat', 'System Chat', 'comments'], ['profile', 'My Profile', 'image']];
     else if (session.role === 'student') navItems = [['dashboard', 'Dashboard', 'tachometer-alt'], ['grades', 'Grades', 'star'], ['attendance', 'Attendance Records', 'calendar'], ['fees', 'Fee Payments', 'money-bill-wave'], ['timetable', 'Timetable', 'clock'], ['chat', 'System Chat', 'comments']];
     else if (session.role === 'parent') navItems = [['dashboard', 'Dashboard', 'tachometer-alt'], ['grades', 'Grades', 'star'], ['attendance', 'Attendance Records', 'calendar'], ['fees', 'Fee Payments', 'money-bill-wave'], ['chat', 'System Chat', 'comments']];
@@ -1838,7 +1899,7 @@ function DashboardRouter() { const { session, activeNav } = React.useContext(Ses
 
 function AdminDashboard({ activeNav }) {
   const { data } = React.useContext(DataContext); const recentlyCreatedAccounts = [...data.credentials].slice(-5).reverse();
-  if (activeNav === 'dashboard') return <div className="space-y-4 md:space-y-6"><SectionHeader title="School Admin Dashboard" subtitle="Core records, summaries, credentials, and linked school data." /><div className="grid-fit mobile-dashboard-grid"><StatCard label="Total Students" value={data.students.length} icon="user-graduate" accent="blue" /><StatCard label="Total Teachers" value={data.teachers.length} icon="chalkboard-user" accent="emerald" /><StatCard label="Total Parents" value={data.parents.length} icon="users" accent="purple" /><StatCard label="Total Accounts Office Staff" value={data.accountStaff.length} icon="calculator" accent="amber" /><StatCard label="Total Principals" value={data.principals.length} icon="crown" accent="rose" /><StatCard label="Total Classes" value={data.classes.length} icon="layer-group" accent="sky" /><StatCard label="Total Subjects" value={data.subjects.length} icon="book" accent="indigo" /><StatCard label="Recently Created Accounts" value={recentlyCreatedAccounts.length} icon="key" accent="slate" /></div><Table columns={['Name', 'Role', 'Username', 'Temporary Password', 'Force Password Change']} rows={recentlyCreatedAccounts} renderCell={(row, c) => { if (c === 'Name') return linkedEntityName(data, row.role, row.linked_entity_id); if (c === 'Role') return ROLE_LABELS[row.role]; if (c === 'Username') return row.username; if (c === 'Temporary Password') return row.temporary_password; if (c === 'Force Password Change') return row.force_password_change; return ''; }} /></div>;
+  if (activeNav === 'dashboard') return <div className="space-y-4 md:space-y-6"><SectionHeader title="School Admin Dashboard" subtitle="Core records, summaries, credentials, and linked school data." /><div className="grid-fit mobile-dashboard-grid"><StatCard label="Total Students" value={data.students.length} icon="user-graduate" accent="blue" /><StatCard label="Total Teachers" value={data.teachers.length} icon="chalkboard-user" accent="emerald" /><StatCard label="Total Parents" value={data.parents.length} icon="users" accent="purple" /><StatCard label="Total Accounts Office Staff" value={data.accountStaff.length} icon="calculator" accent="amber" /><StatCard label="Total Principals" value={data.principals.length} icon="crown" accent="rose" /><StatCard label="Total Classes" value={data.classes.length} icon="layer-group" accent="sky" /><StatCard label="Total Subjects" value={data.subjects.length} icon="book" accent="indigo" /><StatCard label="Recently Created Accounts" value={recentlyCreatedAccounts.length} icon="key" accent="slate" /><StatCard label="Archived Promotion Records" value={data.archiveRecords.length} icon="box-archive" accent="amber" /></div><Table columns={['Name', 'Role', 'Username', 'Temporary Password', 'Force Password Change']} rows={recentlyCreatedAccounts} renderCell={(row, c) => { if (c === 'Name') return linkedEntityName(data, row.role, row.linked_entity_id); if (c === 'Role') return ROLE_LABELS[row.role]; if (c === 'Username') return row.username; if (c === 'Temporary Password') return row.temporary_password; if (c === 'Force Password Change') return row.force_password_change; return ''; }} /></div>;
   if (activeNav === 'principals') return <PrincipalManagement />;
   if (activeNav === 'teachers') return <TeacherManagement />;
   if (activeNav === 'students') return <StudentManagement />;
@@ -1848,9 +1909,82 @@ function AdminDashboard({ activeNav }) {
   if (activeNav === 'subjects') return <SubjectsManagement />;
   if (activeNav === 'timetable') return <TimetableManagement adminMode={true} />;
   if (activeNav === 'accounts') return <UserCredentialsManagement />;
+  if (activeNav === 'archive') return <ArchiveRecordsManagement />;
   if (activeNav === 'chat') return <ChatManagement role="admin" />;
   if (activeNav === 'settings') return <SchoolSettingsManager />;
   return null;
+}
+
+
+function ArchiveRecordsManagement() {
+  const { data, updateCollection, removeArchiveRecord, notify } = React.useContext(DataContext);
+  const [search, setSearch] = React.useState('');
+  const [classFilter, setClassFilter] = React.useState('');
+  const rows = safeArray(data.archiveRecords)
+    .filter(row => !classFilter || row.previous_class_id === classFilter || row.promoted_class_id === classFilter)
+    .filter(row => {
+      const q = String(search || '').trim().toLowerCase();
+      if (!q) return true;
+      const prevClass = fullClassName(data.classes.find(c => c.id === row.previous_class_id));
+      const nextClass = fullClassName(data.classes.find(c => c.id === row.promoted_class_id));
+      return [row.student_name, row.student_number, row.academic_year, prevClass, nextClass, row.status].filter(Boolean).join(' ').toLowerCase().includes(q);
+    });
+
+  const restoreArchive = async archiveRow => {
+    const okay = window.confirm(`Restore archived previous class records for ${archiveRow.student_name}?`);
+    if (!okay) return;
+
+    const studentSnapshot = archiveRow.student_snapshot || null;
+    if (studentSnapshot?.id) {
+      await updateCollection('students', items => items.some(item => item.id === studentSnapshot.id) ? items.map(item => item.id === studentSnapshot.id ? { ...item, ...studentSnapshot } : item) : [...items, studentSnapshot], { silentSuccess: true });
+    }
+    if (safeArray(archiveRow.grades).length) {
+      await updateCollection('grades', items => {
+        const map = new Map(items.map(item => [item.id, item]));
+        safeArray(archiveRow.grades).forEach(item => map.set(item.id, item));
+        return [...map.values()];
+      }, { silentSuccess: true });
+    }
+    if (safeArray(archiveRow.attendance).length) {
+      await updateCollection('attendance', items => {
+        const map = new Map(items.map(item => [item.id, item]));
+        safeArray(archiveRow.attendance).forEach(item => map.set(item.id, item));
+        return [...map.values()];
+      }, { silentSuccess: true });
+    }
+    if (safeArray(archiveRow.fees).length) {
+      await updateCollection('fees', items => {
+        const map = new Map(items.map(item => [item.id, item]));
+        safeArray(archiveRow.fees).forEach(item => map.set(item.id, item));
+        return [...map.values()];
+      }, { silentSuccess: true });
+    }
+    await removeArchiveRecord(archiveRow.id);
+    notify('success', 'Archived previous class records restored successfully.');
+  };
+
+  const permanentlyDeleteArchive = async archiveRow => {
+    const okay = window.confirm(`Permanently delete the archived records for ${archiveRow.student_name}? This cannot be undone.`);
+    if (!okay) return;
+    await removeArchiveRecord(archiveRow.id);
+    notify('success', 'Archived records permanently deleted.');
+  };
+
+  return <div className="space-y-4">
+    <SectionHeader title="Archive Records" subtitle="Only the School Admin can manage archived previous class records from auto promotion. Archived grades, attendance, and fee records stay here until restored or permanently deleted." actions={<><Field label=""><select className="select" value={classFilter} onChange={e => setClassFilter(e.target.value)}><option value="">All classes</option>{data.classes.map(c => <option key={c.id} value={c.id}>{fullClassName(c)}</option>)}</select></Field><Field label=""><input className="input" placeholder="Search student, class, academic year" value={search} onChange={e => setSearch(e.target.value)} /></Field></>} />
+    <Table columns={['Student','Student No','Academic Year','Previous Class','Promoted Class','Archived Grades','Archived Attendance','Archived Fees','Archived At','Actions']} rows={rows} renderCell={(row,c) => {
+      if (c === 'Student') return row.student_name || '';
+      if (c === 'Student No') return row.student_number || '';
+      if (c === 'Academic Year') return row.academic_year || '';
+      if (c === 'Previous Class') return fullClassName(data.classes.find(x => x.id === row.previous_class_id)) || '';
+      if (c === 'Promoted Class') return fullClassName(data.classes.find(x => x.id === row.promoted_class_id)) || '';
+      if (c === 'Archived Grades') return safeArray(row.grades).length;
+      if (c === 'Archived Attendance') return safeArray(row.attendance).length;
+      if (c === 'Archived Fees') return safeArray(row.fees).length;
+      if (c === 'Archived At') return formatDateTime(row.archived_at);
+      if (c === 'Actions') return <div className="flex gap-2 flex-wrap"><button className="btn btn-outline" onClick={() => restoreArchive(row)}><i className="fas fa-rotate-left mr-2"></i>Restore</button><button className="btn btn-danger" onClick={() => permanentlyDeleteArchive(row)}><i className="fas fa-trash mr-2"></i>Permanent Delete</button></div>;
+    }} />
+  </div>;
 }
 
 function PrincipalManagement() {
@@ -1892,7 +2026,7 @@ function TeacherManagement() {
 }
 
 function StudentManagement() {
-  const { data, updateCollection, notify } = React.useContext(DataContext); const [open, setOpen] = React.useState(false); const [form, setForm] = React.useState(emptyStudent);
+  const { data, updateCollection, notify, addArchiveRecord } = React.useContext(DataContext); const [open, setOpen] = React.useState(false); const [form, setForm] = React.useState(emptyStudent);
   const promotionYear = latestAcademicYearFromGrades(data.grades);
   const printStudents = () => openRecordsPrint({
     school: data.schoolSettings,
@@ -1919,7 +2053,7 @@ function StudentManagement() {
   const save = async e => { e.preventDefault(); const prefix = numberPrefix(data.schoolSettings.school_name, 'STU'); const selectedClass = data.classes.find(c => c.id === form.class_id); const payload = { ...form, id: form.id || uid(), student_number: form.student_number || `${prefix}${String(data.students.length + 2001).padStart(5,'0')}`, student_section: form.student_section || selectedClass?.section || '', account_active: form.account_active ?? true }; validateCollectionRecord('student', payload, data.students); await updateCollection('students', items => items.some(x => x.id === payload.id) ? items.map(x => x.id === payload.id ? payload : x) : [...items, payload]); setOpen(false); setForm(emptyStudent); };
   const edit = s => { setForm(s); setOpen(true); }; const remove = async id => { if (!confirmDeleteAction('this student record')) return; await updateCollection('students', items => items.filter(x => x.id !== id)); };
   const runAutoPromotion = async () => {
-    await runAutoPromotionAcrossRecords({ data, updateCollection, notify, academicYear: promotionYear });
+    await runAutoPromotionAcrossRecords({ data, updateCollection, notify, addArchiveRecord, academicYear: promotionYear });
   };
   return <div className="space-y-4"><SectionHeader title="Students Management" subtitle={`Term 3 promotion status is auto evaluated from ${promotionYear} results. Promoted students move to the next class when auto promotion is run.`} actions={<><PrintButton label="Print Students Records" onClick={printStudents} /><button onClick={runAutoPromotion} className="btn btn-outline"><i className="fas fa-arrow-up-right-dots mr-2"></i>Run Term 3 Auto Promotion</button><button onClick={() => { setForm(emptyStudent); setOpen(true); }} className="btn btn-primary"><i className="fas fa-plus mr-2"></i>Add Student</button></>} /><Table columns={['Photo','Student No','Full Name','Assigned Class','Gender','Date of Birth','Parent Full Name','Parent Contact','Relationship','Promotion Status','Account','Actions']} rows={data.students} renderCell={(row,c) => { const cls = data.classes.find(x => x.id === row.class_id); const promotion = evaluatePromotion(data, row, promotionYear); if (c === 'Photo') return row.photo_url ? <img src={row.photo_url} className="w-10 h-10 rounded-full object-cover" /> : <i className="fas fa-user-circle text-2xl text-slate-400"></i>; if (c === 'Student No') return row.student_number; if (c === 'Full Name') return row.full_name; if (c === 'Assigned Class') return fullClassName(cls); if (c === 'Gender') return row.gender; if (c === 'Date of Birth') return row.dob; if (c === 'Parent Full Name') return row.parent_full_name; if (c === 'Parent Contact') return row.parent_phone_contact; if (c === 'Relationship') return row.relationship; if (c === 'Promotion Status') return <span className={`font-bold ${promotion.statusColor}`}>{promotion.statusText}</span>; if (c === 'Account') return <span className={`pill ${row.account_active ? 'online' : 'offline'}`}>{row.account_active ? 'Active' : 'Inactive'}</span>; if (c === 'Actions') return <div className="flex gap-2"><button className="btn btn-outline" onClick={() => edit(row)}>Edit</button><button className="btn btn-danger" onClick={() => remove(row.id)}>Delete</button></div>; }} /><Modal open={open} onClose={() => setOpen(false)} title={form.id ? 'Edit Student' : 'Add Student'}><form onSubmit={save} className="space-y-4"><ImageInput label="Student Photo" storageFolder="students" value={form.photo_url} onChange={v => setForm({ ...form, photo_url: v })} /><div className="grid md:grid-cols-2 gap-4"><Field label="Student Full Name"><input className="input" required value={form.full_name} onChange={e => setForm({ ...form, full_name: e.target.value })} /></Field><Field label="Student Number"><input className="input" value={form.student_number} readOnly placeholder="Auto generated by school name" /></Field><Field label="Assign Class"><select className="select" required value={form.class_id} onChange={e => { const cls = data.classes.find(c => c.id === e.target.value); setForm({ ...form, class_id: e.target.value, student_section: cls?.section || '' }); }}><option value="">Select class</option>{data.classes.map(cls => <option key={cls.id} value={cls.id}>{fullClassName(cls)}</option>)}</select></Field><Field label="Class Section or Stream"><input className="input" value={form.student_section} readOnly placeholder="Auto matches selected class structure" /></Field><Field label="Gender"><select className="select" value={form.gender} onChange={e => setForm({ ...form, gender: e.target.value })}>{GENDERS.map(x => <option key={x}>{x}</option>)}</select></Field><Field label="Date of Birth"><input type="date" className="input" value={form.dob} onChange={e => setForm({ ...form, dob: e.target.value })} /></Field><Field label="Parent Full Name"><input className="input" required value={form.parent_full_name} onChange={e => setForm({ ...form, parent_full_name: e.target.value })} /></Field><Field label="Parent Phone Contact"><input className="input" required value={form.parent_phone_contact} onChange={e => setForm({ ...form, parent_phone_contact: e.target.value })} /></Field><Field label="Relationship"><select className="select" value={form.relationship} onChange={e => setForm({ ...form, relationship: e.target.value })}>{RELATIONSHIPS.map(x => <option key={x}>{x}</option>)}</select></Field></div><div className="flex justify-end gap-2"><button type="button" className="btn btn-secondary" onClick={() => setOpen(false)}>Cancel</button><button type="submit" className="btn btn-primary">Save Student</button></div></form></Modal></div>;
 }
@@ -2559,7 +2693,7 @@ function PrincipalDashboard({ activeNav }) {
 }
 
 function PrincipalStudents() {
-  const { data, updateCollection, notify } = React.useContext(DataContext); const [filterClass, setFilterClass] = React.useState('');
+  const { data, updateCollection, notify, addArchiveRecord } = React.useContext(DataContext); const [filterClass, setFilterClass] = React.useState('');
   const promotionYear = latestAcademicYearFromGrades(data.grades);
   const rows = data.students.filter(s => !filterClass || s.class_id === filterClass);
   const printStudents = () => openRecordsPrint({
@@ -2583,7 +2717,7 @@ function PrincipalStudents() {
     })
   });
   const runAutoPromotion = async () => {
-    await runAutoPromotionAcrossRecords({ data, updateCollection, notify, academicYear: promotionYear });
+    await runAutoPromotionAcrossRecords({ data, updateCollection, notify, addArchiveRecord, academicYear: promotionYear });
   };
   return <div className="space-y-4"><SectionHeader title="Student Management" subtitle={`View only student records with real time class filtering. Term 3 promotion status is evaluated from ${promotionYear} results.`} actions={<><Field label=""><select className="select" value={filterClass} onChange={e => setFilterClass(e.target.value)}><option value="">All classes</option>{data.classes.map(c => <option key={c.id} value={c.id}>{fullClassName(c)}</option>)}</select></Field><button onClick={runAutoPromotion} className="btn btn-outline"><i className="fas fa-arrow-up-right-dots mr-2"></i>Run Term 3 Auto Promotion</button><PrintButton label="Print Students Records" onClick={printStudents} /></>} /><Table columns={['Full Name','Student No','Assigned Class','Gender','Date of Birth','Parent Full Name','Parent Contact','Promotion Status','Account']} rows={rows} renderCell={(row,c) => { const promotion = evaluatePromotion(data, row, promotionYear); if (c === 'Full Name') return row.full_name; if (c === 'Student No') return row.student_number; if (c === 'Assigned Class') return fullClassName(data.classes.find(x => x.id === row.class_id)); if (c === 'Gender') return row.gender; if (c === 'Date of Birth') return row.dob; if (c === 'Parent Full Name') return row.parent_full_name; if (c === 'Parent Contact') return row.parent_phone_contact; if (c === 'Promotion Status') return <span className={`font-bold ${promotion.statusColor}`}>{promotion.statusText}</span>; if (c === 'Account') return <span className={`pill ${row.account_active ? 'online' : 'offline'}`}>{row.account_active ? 'Active' : 'Inactive'}</span>; }} /></div>;
 }
