@@ -1309,7 +1309,7 @@ function usePersistentSchoolData() {
       const normalized = normalizeStoredGradeRow(item);
       return ({ id: dbId(item.id), class_id: item.class_id, student_id: item.student_id, teacher_id: item.teacher_id || null, subject_id: item.subject_id, term: item.term, academic_year: item.academic_year, mid_exam_30: Number(normalized.mid_exam_30 || 0), end_exam_70: Number(normalized.end_exam_70 || 0), grade_letter: normalized.grade_letter || null, interpretation: normalized.interpretation || null, position: item.position || null, teacher_initial: item.teacher_initial || null, locked: !!item.locked, is_published: !!item.is_published, published_at: item.is_published ? (item.published_at || new Date().toISOString()) : null });
     });
-    else if (key === 'fees') await syncSimpleTable('fees', prevItems, nextItems, item => ({ id: dbId(item.id), student_id: item.student_id, class_id: item.class_id, academic_year: item.academic_year, term: item.term, amount_due: Number(item.amount_due || 0), amount_paid: Number(item.amount_paid || 0), balance: Number(item.balance || 0), status: item.status || null, payment_method: item.payment_method || null, recorded_by: item.recorded_by || null }));
+    else if (key === 'fees') await syncSimpleTable('fees', prevItems, nextItems, item => ({ id: dbId(item.id), student_id: item.student_id, class_id: item.class_id, academic_year: item.academic_year, term: item.term, amount_due: Number(item.amount_due || 0), amount_paid: Number(item.amount_paid || 0), status: item.status || null, payment_method: item.payment_method || null, recorded_by: item.recorded_by || null }));
     else if (key === 'credentials') {
       const filteredPrev = safeArray(prevItems);
       const filteredNext = safeArray(nextItems);
