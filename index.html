@@ -822,6 +822,7 @@ const DB_KEY = 'school_management_complete_dataset';
 const LIGHT_OFFLINE_CACHE_KEY = 'school_management_light_cache_v1';
 const LIGHT_OFFLINE_QUEUE_KEY = 'school_management_light_queue_v1';
 const LIGHT_OFFLINE_META_KEY = 'school_management_light_meta_v1';
+const FEE_META_CACHE_KEY = 'school_management_fee_meta_v1';
 function clonePlain(value) {
   try { return JSON.parse(JSON.stringify(value)); } catch (e) { return value; }
 }
@@ -859,6 +860,39 @@ async function appendOfflineQueue(entry) {
 }
 async function readOfflineMeta() {
   try { return (await offlineStore.getItem(LIGHT_OFFLINE_META_KEY)) || {}; } catch (e) { return {}; }
+}
+async function readFeeMetaStore() {
+  try { return (await offlineStore.getItem(FEE_META_CACHE_KEY)) || {}; } catch (e) { return {}; }
+}
+async function writeFeeMetaStore(value={}) {
+  try { await offlineStore.setItem(FEE_META_CACHE_KEY, clonePlain(value || {})); } catch (e) {}
+}
+async function persistFeeMetaRecord(record={}) {
+  const current = await readFeeMetaStore();
+  const next = {
+    ...current,
+    [record.id]: {
+      credit_used: Number(record.credit_used || 0),
+      requested_credit_used: Number((record.requested_credit_used ?? record.credit_used) || 0),
+      notes: record.notes || '',
+      recorded_at: record.recorded_at || '',
+      updated_at: record.updated_at || ''
+    }
+  };
+  await writeFeeMetaStore(next);
+}
+function mergeFeeMetaIntoFees(rows=[], feeMetaMap={}) {
+  return safeArray(rows).map(row => {
+    const meta = feeMetaMap?.[row.id] || {};
+    return {
+      ...row,
+      credit_used: Number(meta.credit_used || row.credit_used || 0),
+      requested_credit_used: Number((meta.requested_credit_used ?? row.requested_credit_used ?? row.credit_used) || 0),
+      notes: meta.notes || row.notes || '',
+      recorded_at: meta.recorded_at || row.recorded_at || '',
+      updated_at: meta.updated_at || row.updated_at || ''
+    };
+  });
 }
 function browserOnline() {
   return typeof navigator === 'undefined' ? true : !!navigator.onLine;
@@ -939,6 +973,7 @@ async function fetchAllSchoolData() {
 
   if (schoolSettingsRes.error && schoolSettingsRes.error.code !== 'PGRST116') throw schoolSettingsRes.error;
   const credentialsRaw = await ensureBackendAdminCredential(credentialsRawInitial || []);
+  const feeMetaMap = await readFeeMetaStore();
   const profileMap = new Map((profiles || []).map(p => [p.id, p]));
   const parentLinksByParent = {};
   (parentLinksRaw || []).forEach(link => {
@@ -974,7 +1009,7 @@ async function fetchAllSchoolData() {
     timetable: timetableRaw || [],
     attendance: (attendanceRaw || []).map(row => ({ ...row, date: row.attendance_date })),
     grades: (gradesRaw || []).map(normalizeStoredGradeRow),
-    fees: feesRaw || [],
+    fees: mergeFeeMetaIntoFees(feesRaw || [], feeMetaMap),
     credentials: ensureAdminCredential((credentialsRaw || []).map(row => ({ ...row, force_password_change: toYesNo(row.force_password_change) }))),
     chats: chatsRaw || [],
     presenceRows: presenceRaw || [],
@@ -1185,7 +1220,7 @@ function usePersistentSchoolData() {
       const normalized = normalizeStoredGradeRow(item);
       return ({ id: dbId(item.id), class_id: item.class_id, student_id: item.student_id, teacher_id: item.teacher_id || null, subject_id: item.subject_id, term: item.term, academic_year: item.academic_year, mid_exam_30: Number(normalized.mid_exam_30 || 0), end_exam_70: Number(normalized.end_exam_70 || 0), grade_letter: normalized.grade_letter || null, interpretation: normalized.interpretation || null, position: item.position || null, teacher_initial: item.teacher_initial || null, locked: !!item.locked, is_published: !!item.is_published, published_at: item.is_published ? (item.published_at || new Date().toISOString()) : null });
     });
-    else if (key === 'fees') await syncSimpleTable('fees', prevItems, nextItems, item => ({ id: dbId(item.id), student_id: item.student_id, class_id: item.class_id, academic_year: item.academic_year, term: item.term, amount_due: Number(item.amount_due || 0), amount_paid: Number(item.amount_paid || 0), credit_used: Number(item.credit_used || 0), balance: Number(item.balance || 0), status: item.status || null, payment_method: item.payment_method || null, notes: item.notes || null, recorded_by: item.recorded_by || null, recorded_at: item.recorded_at || new Date().toISOString(), updated_at: item.updated_at || item.recorded_at || new Date().toISOString() }));
+    else if (key === 'fees') await syncSimpleTable('fees', prevItems, nextItems, item => ({ id: dbId(item.id), student_id: item.student_id, class_id: item.class_id, academic_year: item.academic_year, term: item.term, amount_due: Number(item.amount_due || 0), amount_paid: Number(item.amount_paid || 0), balance: Number(item.balance || 0), status: item.status || null, payment_method: item.payment_method || null, recorded_by: item.recorded_by || null }));
     else if (key === 'credentials') {
       const filteredPrev = safeArray(prevItems);
       const filteredNext = safeArray(nextItems);
@@ -2232,6 +2267,7 @@ function FeePayments({ officer }) {
       recorded_at: form.recorded_at || nowIso,
       updated_at: nowIso
     };
+    await persistFeeMetaRecord(payload);
     await updateCollection('fees', items => items.some(x => x.id === payload.id) ? items.map(x => x.id === payload.id ? payload : x) : [payload, ...items]);
     notify('success', editing ? 'Fee record updated successfully.' : 'Fee record added successfully.');
     setOpen(false);
