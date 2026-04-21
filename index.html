@@ -308,11 +308,21 @@ function formatReportTerm(term, year) {
 function buildStudentGradeReportHtml({ school, student, classLabel, term, year, rows, attendanceRows, promotionText='', promotionColor='#15803d' }) {
   const totalScore = rows.reduce((sum, row) => sum + Number(row.total_score || 0), 0);
   const avgScore = rows.length ? (totalScore / rows.length).toFixed(1) : '0.0';
+  const numericAverage = Number(avgScore || 0);
   const attendanceActual = attendanceRows.filter(a => String(a.status || '').toLowerCase() === 'present').length;
   const attendanceExpected = attendanceRows.length;
   const attendancePercent = attendanceExpected ? Math.round((attendanceActual / attendanceExpected) * 100) : 0;
   const logoHtml = school.logo_url ? `<img src="${school.logo_url}" style="width:74px;height:74px;object-fit:cover;border-radius:50%;border:3px solid #0f766e;" />` : `<div style="width:74px;height:74px;border-radius:50%;background:#ccfbf1;border:3px solid #0f766e;display:flex;align-items:center;justify-content:center;font-weight:800;color:#115e59;">SMS</div>`;
   const studentPhotoHtml = student?.photo_url ? `<img src="${student.photo_url}" style="width:110px;height:130px;object-fit:cover;border-radius:18px;border:3px solid #0f766e;background:#fff;" />` : `<div style="width:110px;height:130px;border-radius:18px;border:2px dashed #94a3b8;background:#f8fafc;display:flex;align-items:center;justify-content:center;text-align:center;font-size:12px;font-weight:700;color:#475569;padding:10px;">Student Photo</div>`;
+  const headmasterRemark = (() => {
+    if (!rows.length) return `No end of term academic record is available for ${term || 'this term'}. Please ensure all subject scores are submitted for proper review.`;
+    const promotionNote = promotionText && promotionText !== 'Pending evaluation' ? ` ${promotionText}.` : '';
+    if (numericAverage >= 85) return `An outstanding performance has been recorded for ${term || 'this term'}. The student has demonstrated excellent academic strength, discipline, and consistency across subjects. Please keep up this exceptional standard.${promotionNote}`;
+    if (numericAverage >= 70) return `A very good performance has been recorded for ${term || 'this term'}. The student is progressing steadily and shows strong understanding in most subjects. More consistency can lead to even higher achievement.${promotionNote}`;
+    if (numericAverage >= 55) return `A satisfactory performance has been recorded for ${term || 'this term'}. The student has shown a fair level of understanding, but greater effort, regular study habits, and improved concentration are needed for stronger results.${promotionNote}`;
+    if (numericAverage >= 40) return `The student recorded a below expected performance for ${term || 'this term'}. Immediate attention is needed in weak subject areas. With closer supervision, regular class participation, and guided revision, improvement is achievable.${promotionNote}`;
+    return `The student recorded a weak performance for ${term || 'this term'}. Serious academic support, close monitoring, and stronger commitment to studies are needed in the next term to achieve improvement.${promotionNote}`;
+  })();
   const rowsHtml = rows.map(row => {
     const subjectName = row.subject_name || '';
     return `<tr>
@@ -359,6 +369,7 @@ function buildStudentGradeReportHtml({ school, student, classLabel, term, year, 
   .remarks { margin-top: 18px; display: grid; gap: 12px; }
   .remarks .box { min-height: 64px; border: 1px dashed #94a3b8; border-radius: 12px; padding: 10px 12px; }
   .remarks .label { font-weight: 800; color: #1e293b; margin-bottom: 6px; }
+  .remarks .headmaster-auto-text { color: #1d4ed8; font-weight: 700; line-height: 1.6; }
   .foot { margin-top: 18px; display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
   .sign { padding-top: 28px; border-bottom: 1px solid #334155; text-align: center; font-weight: 700; }
   .note { margin-top: 16px; text-align: center; font-size: 12px; color: #7f1d1d; font-weight: 700; }
@@ -420,7 +431,7 @@ function buildStudentGradeReportHtml({ school, student, classLabel, term, year, 
     <div class="remarks">
       <div class="box"><div class="label">Attendance Summary</div>Expected: ${attendanceExpected} &nbsp;&nbsp; Actual: ${attendanceActual} &nbsp;&nbsp; Percentage: ${attendancePercent}%</div>
       <div class="box"><div class="label">Form Master's Remarks</div></div>
-      <div class="box"><div class="label">Headmaster's Remarks</div></div>
+      <div class="box"><div class="label">Headmaster's Remarks</div><div class="headmaster-auto-text">${headmasterRemark}</div></div>
     </div>
 
     <div class="foot">
@@ -1601,7 +1612,7 @@ function Sidebar() {
     else if (session.role === 'teacher') navItems = [['dashboard', 'Dashboard', 'tachometer-alt'], ['students', 'Student Management', 'users'], ['attendance', 'Attendance Records', 'calendar-check'], ['grades', 'Grades', 'star'], ['timetable', 'Timetable', 'clock'], ['chat', 'System Chat', 'comments'], ['profile', 'My Profile', 'image']];
     else if (session.role === 'student') navItems = [['dashboard', 'Dashboard', 'tachometer-alt'], ['grades', 'Grades', 'star'], ['attendance', 'Attendance Records', 'calendar'], ['fees', 'Fee Payments', 'money-bill-wave'], ['timetable', 'Timetable', 'clock'], ['chat', 'System Chat', 'comments']];
     else if (session.role === 'parent') navItems = [['dashboard', 'Dashboard', 'tachometer-alt'], ['grades', 'Grades', 'star'], ['attendance', 'Attendance Records', 'calendar'], ['fees', 'Fee Payments', 'money-bill-wave'], ['chat', 'System Chat', 'comments']];
-    else if (session.role === 'accountant') navItems = [['dashboard', 'Dashboard', 'tachometer-alt'], ['parentcontacts', 'Parent Contacts', 'address-book'], ['fees', 'Fee Payments', 'hand-holding-usd'], ['statements', 'Fees Statement', 'file-invoice'], ['gradelock', 'Grades Lock Control', 'lock']];
+    else if (session.role === 'accountant') navItems = [['dashboard', 'Dashboard', 'tachometer-alt'], ['fees', 'Fee Payments', 'hand-holding-usd'], ['statements', 'Fees Statement', 'file-invoice'], ['parentcontacts', 'Parent Contacts', 'address-book'], ['gradelock', 'Grades Lock Control', 'lock']];
     else if (session.role === 'principal') navItems = [['dashboard', 'Dashboard', 'tachometer-alt'], ['students', 'Student Management', 'user-graduate'], ['teachers', 'Teacher Management', 'chalkboard-user'], ['academic', 'Academic Performance', 'chart-line'], ['attendance', 'Attendance Summary', 'calendar-alt'], ['chat', 'System Chat', 'comments']];
     return session.role ? [...navItems, ['logout', 'Logout', 'sign-out-alt']] : navItems;
   }, [session.role]);
@@ -1967,61 +1978,11 @@ function ParentDashboard({ activeNav }) {
 }
 
 function AccountantDashboard({ activeNav }) {
-  const { data } = React.useContext(DataContext);
-  const { session, setActiveNav } = React.useContext(SessionContext);
-  const officer = data.accountStaff.find(a => a.id === session.linkedId) || data.accountStaff[0];
-  if (!officer) return <EmptyState text="No accounts officer record found." />;
+  const { data } = React.useContext(DataContext); const { session } = React.useContext(SessionContext); const officer = data.accountStaff.find(a => a.id === session.linkedId) || data.accountStaff[0]; if (!officer) return <EmptyState text="No accounts officer record found." />;
   if (activeNav === 'dashboard') {
     const owing = data.fees.filter(f => Number(f.balance || 0) > 0).length;
     const parentContactCount = data.students.filter(s => !!String(s.parent_phone_contact || '').trim()).length;
-    const quickRows = data.students
-      .map(student => {
-        const cls = fullClassName(data.classes.find(c => c.id === student.class_id));
-        const phone = String(student.parent_phone_contact || '').trim();
-        const balance = data.fees.filter(f => f.student_id === student.id).reduce((sum, row) => sum + Number(row.balance || 0), 0);
-        return { ...student, class_label: cls, parent_phone: phone, total_balance: balance };
-      })
-      .filter(row => !!row.parent_phone)
-      .sort((a, b) => Number(b.total_balance || 0) - Number(a.total_balance || 0))
-      .slice(0, 5);
-    return <div className="space-y-6">
-      <SectionHeader
-        title={`Welcome, ${officer.full_name}`}
-        subtitle="Accounts Office Staff dashboard for fees, statements, grades lock control, and parent contact follow up."
-        actions={<div className="flex flex-wrap gap-2 items-center"><RoleStatusDot online={data.presence.accountant?.online} label="Accounts Status" /><button className="btn btn-primary" onClick={() => setActiveNav('parentcontacts')}><i className="fas fa-address-book mr-2"></i>Open Parent Contacts</button></div>}
-      />
-      <div className="grid-fit">
-        <button type="button" onClick={() => setActiveNav('fees')} className="text-left"><StatCard label="Fee Records" value={data.fees.length} icon="file-invoice-dollar" accent="emerald" /></button>
-        <button type="button" onClick={() => setActiveNav('statements')} className="text-left"><StatCard label="Students Owing Fees" value={owing} icon="money-bill-wave" accent="rose" /></button>
-        <button type="button" onClick={() => setActiveNav('gradelock')} className="text-left"><StatCard label="Classes" value={data.classes.length} icon="layer-group" accent="blue" /></button>
-        <button type="button" onClick={() => setActiveNav('parentcontacts')} className="text-left"><StatCard label="Parent Contacts" value={parentContactCount} icon="address-book" accent="amber" /></button>
-      </div>
-      <div className="card p-5 border border-amber-200 bg-amber-50 text-amber-900">
-        <div className="font-bold text-base mb-2">Parent messaging notice</div>
-        <p className="text-sm leading-6">Direct free online SMS to any mobile phone is not available from a normal browser based school system without a telecom gateway or other third party SMS provider, and those services are normally paid. This update adds a no paid service contact workflow with linked parent contacts, one tap SMS app opening, WhatsApp web messaging, click to call, and message copy actions for faster follow up.</p>
-        <div className="mt-4 flex flex-wrap gap-2">
-          <button className="btn btn-primary" onClick={() => setActiveNav('parentcontacts')}><i className="fas fa-address-book mr-2"></i>Open Parent Contacts</button>
-          <button className="btn btn-outline" onClick={() => setActiveNav('fees')}><i className="fas fa-hand-holding-usd mr-2"></i>Open Fee Payments</button>
-        </div>
-      </div>
-      <div className="card p-5">
-        <div className="flex items-center justify-between gap-3 mb-4">
-          <div>
-            <div className="font-bold text-base">Quick parent contact preview</div>
-            <div className="text-sm text-slate-500">The first rows below lead directly to the full Parent Contacts page.</div>
-          </div>
-          <button className="btn btn-outline" onClick={() => setActiveNav('parentcontacts')}>View All Contacts</button>
-        </div>
-        {quickRows.length ? <Table columns={['Student','Class','Parent Contact','Outstanding Balance','Action']} rows={quickRows} renderCell={(row, c) => {
-          if (c === 'Student') return row.full_name;
-          if (c === 'Class') return row.class_label;
-          if (c === 'Parent Contact') return row.parent_phone;
-          if (c === 'Outstanding Balance') return `GHS ${Number(row.total_balance || 0).toFixed(2)}`;
-          if (c === 'Action') return <button className="btn btn-primary !px-3 !py-2 text-sm" onClick={() => setActiveNav('parentcontacts')}><i className="fas fa-paper-plane mr-2"></i>Open Contact Tools</button>;
-          return '';
-        }} /> : <EmptyState text="No parent phone contacts are available yet. Add parent phone numbers in student or parent records to activate the contact tools." />}
-      </div>
-    </div>;
+    return <div className="space-y-6"><SectionHeader title={`Welcome, ${officer.full_name}`} subtitle="Accounts Office Staff dashboard for fees, statements, grades lock control, and parent contact follow up." actions={<RoleStatusDot online={data.presence.accountant?.online} label="Accounts Status" />} /><div className="grid-fit"><StatCard label="Fee Records" value={data.fees.length} icon="file-invoice-dollar" accent="emerald" /><StatCard label="Students Owing Fees" value={owing} icon="money-bill-wave" accent="rose" /><StatCard label="Classes" value={data.classes.length} icon="layer-group" accent="blue" /><StatCard label="Parent Contacts" value={parentContactCount} icon="address-book" accent="amber" /></div><div className="card p-5 border border-amber-200 bg-amber-50 text-amber-900"><div className="font-bold text-base mb-2">Parent messaging notice</div><p className="text-sm leading-6">Direct free online SMS to any mobile phone is not available from a normal browser based school system without a telecom gateway or other third party SMS provider, and those services are normally paid. This update adds a no paid service contact workflow with linked parent contacts, one tap SMS app opening, WhatsApp web messaging, click to call, and message copy actions for faster follow up.</p></div></div>;
   }
   if (activeNav === 'fees') return <FeePayments officer={officer} />;
   if (activeNav === 'statements') return <FeesStatement />;
