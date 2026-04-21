@@ -160,6 +160,43 @@ function evaluatePromotion(data, student, academicYear='') {
   const statusText = promoted ? `Promoted to ${fullClassName(nextClass)}` : 'Not promoted';
   return { year, evaluated: true, promoted, statusText, statusColor: promoted ? 'text-green-700' : 'text-red-700', reportColor: promoted ? '#15803d' : '#b91c1c', currentClass, nextClass, average: Number(average.toFixed(1)), rows: term3Rows };
 }
+
+async function runAutoPromotionAcrossRecords({ data, updateCollection, notify, academicYear='' }) {
+  const year = academicYear || latestAcademicYearFromGrades(data?.grades || []);
+  const promotedMap = new Map();
+  safeArray(data?.students).forEach(student => {
+    const result = evaluatePromotion(data, student, year);
+    if (result.promoted && result.nextClass && student.class_id !== result.nextClass.id) {
+      promotedMap.set(student.id, { nextClassId: result.nextClass.id, nextSection: result.nextClass.section || '' });
+    }
+  });
+  if (!promotedMap.size) {
+    notify('info', `No students qualified for Term 3 auto promotion for ${year}.`);
+    return;
+  }
+
+  await updateCollection('students', items => items.map(student => {
+    const next = promotedMap.get(student.id);
+    return next ? { ...student, class_id: next.nextClassId, student_section: next.nextSection } : student;
+  }), { silentSuccess: true });
+
+  await updateCollection('grades', items => items.map(row => {
+    const next = promotedMap.get(row.student_id);
+    return next ? { ...row, class_id: next.nextClassId } : row;
+  }), { silentSuccess: true });
+
+  await updateCollection('attendance', items => items.map(row => {
+    const next = promotedMap.get(row.student_id);
+    return next ? { ...row, class_id: next.nextClassId } : row;
+  }), { silentSuccess: true });
+
+  await updateCollection('fees', items => items.map(row => {
+    const next = promotedMap.get(row.student_id);
+    return next ? { ...row, class_id: next.nextClassId } : row;
+  }), { silentSuccess: true });
+
+  notify('success', `${promotedMap.size} student(s) were auto promoted and all linked class records were updated to the promoted current class for ${year}.`);
+}
 const slugBase = (name='') => name.toLowerCase().trim().replace(/[^a-z0-9]+/g, '.').replace(/^\.+|\.+$/g, '') || 'user';
 const generatePassword = () => Math.random().toString(36).slice(-8) + Math.floor(Math.random() * 90 + 10);
 const generateUsername = (displayName, role) => `${slugBase(displayName)}.${role.slice(0,3)}${Math.floor(Math.random() * 900 + 100)}`;
@@ -1882,14 +1919,7 @@ function StudentManagement() {
   const save = async e => { e.preventDefault(); const prefix = numberPrefix(data.schoolSettings.school_name, 'STU'); const selectedClass = data.classes.find(c => c.id === form.class_id); const payload = { ...form, id: form.id || uid(), student_number: form.student_number || `${prefix}${String(data.students.length + 2001).padStart(5,'0')}`, student_section: form.student_section || selectedClass?.section || '', account_active: form.account_active ?? true }; validateCollectionRecord('student', payload, data.students); await updateCollection('students', items => items.some(x => x.id === payload.id) ? items.map(x => x.id === payload.id ? payload : x) : [...items, payload]); setOpen(false); setForm(emptyStudent); };
   const edit = s => { setForm(s); setOpen(true); }; const remove = async id => { if (!confirmDeleteAction('this student record')) return; await updateCollection('students', items => items.filter(x => x.id !== id)); };
   const runAutoPromotion = async () => {
-    const term3Students = data.students.filter(student => evaluatePromotion(data, student, promotionYear).evaluated);
-    if (!term3Students.length) { notify('info', `No Term 3 grades were found for ${promotionYear}.`); return; }
-    await updateCollection('students', items => items.map(student => {
-      const result = evaluatePromotion(data, student, promotionYear);
-      if (!result.promoted || !result.nextClass || student.class_id === result.nextClass.id) return student;
-      return { ...student, class_id: result.nextClass.id, student_section: result.nextClass.section || '' };
-    }));
-    notify('success', `Auto promotion completed for ${promotionYear}.`);
+    await runAutoPromotionAcrossRecords({ data, updateCollection, notify, academicYear: promotionYear });
   };
   return <div className="space-y-4"><SectionHeader title="Students Management" subtitle={`Term 3 promotion status is auto evaluated from ${promotionYear} results. Promoted students move to the next class when auto promotion is run.`} actions={<><PrintButton label="Print Students Records" onClick={printStudents} /><button onClick={runAutoPromotion} className="btn btn-outline"><i className="fas fa-arrow-up-right-dots mr-2"></i>Run Term 3 Auto Promotion</button><button onClick={() => { setForm(emptyStudent); setOpen(true); }} className="btn btn-primary"><i className="fas fa-plus mr-2"></i>Add Student</button></>} /><Table columns={['Photo','Student No','Full Name','Assigned Class','Gender','Date of Birth','Parent Full Name','Parent Contact','Relationship','Promotion Status','Account','Actions']} rows={data.students} renderCell={(row,c) => { const cls = data.classes.find(x => x.id === row.class_id); const promotion = evaluatePromotion(data, row, promotionYear); if (c === 'Photo') return row.photo_url ? <img src={row.photo_url} className="w-10 h-10 rounded-full object-cover" /> : <i className="fas fa-user-circle text-2xl text-slate-400"></i>; if (c === 'Student No') return row.student_number; if (c === 'Full Name') return row.full_name; if (c === 'Assigned Class') return fullClassName(cls); if (c === 'Gender') return row.gender; if (c === 'Date of Birth') return row.dob; if (c === 'Parent Full Name') return row.parent_full_name; if (c === 'Parent Contact') return row.parent_phone_contact; if (c === 'Relationship') return row.relationship; if (c === 'Promotion Status') return <span className={`font-bold ${promotion.statusColor}`}>{promotion.statusText}</span>; if (c === 'Account') return <span className={`pill ${row.account_active ? 'online' : 'offline'}`}>{row.account_active ? 'Active' : 'Inactive'}</span>; if (c === 'Actions') return <div className="flex gap-2"><button className="btn btn-outline" onClick={() => edit(row)}>Edit</button><button className="btn btn-danger" onClick={() => remove(row.id)}>Delete</button></div>; }} /><Modal open={open} onClose={() => setOpen(false)} title={form.id ? 'Edit Student' : 'Add Student'}><form onSubmit={save} className="space-y-4"><ImageInput label="Student Photo" storageFolder="students" value={form.photo_url} onChange={v => setForm({ ...form, photo_url: v })} /><div className="grid md:grid-cols-2 gap-4"><Field label="Student Full Name"><input className="input" required value={form.full_name} onChange={e => setForm({ ...form, full_name: e.target.value })} /></Field><Field label="Student Number"><input className="input" value={form.student_number} readOnly placeholder="Auto generated by school name" /></Field><Field label="Assign Class"><select className="select" required value={form.class_id} onChange={e => { const cls = data.classes.find(c => c.id === e.target.value); setForm({ ...form, class_id: e.target.value, student_section: cls?.section || '' }); }}><option value="">Select class</option>{data.classes.map(cls => <option key={cls.id} value={cls.id}>{fullClassName(cls)}</option>)}</select></Field><Field label="Class Section or Stream"><input className="input" value={form.student_section} readOnly placeholder="Auto matches selected class structure" /></Field><Field label="Gender"><select className="select" value={form.gender} onChange={e => setForm({ ...form, gender: e.target.value })}>{GENDERS.map(x => <option key={x}>{x}</option>)}</select></Field><Field label="Date of Birth"><input type="date" className="input" value={form.dob} onChange={e => setForm({ ...form, dob: e.target.value })} /></Field><Field label="Parent Full Name"><input className="input" required value={form.parent_full_name} onChange={e => setForm({ ...form, parent_full_name: e.target.value })} /></Field><Field label="Parent Phone Contact"><input className="input" required value={form.parent_phone_contact} onChange={e => setForm({ ...form, parent_phone_contact: e.target.value })} /></Field><Field label="Relationship"><select className="select" value={form.relationship} onChange={e => setForm({ ...form, relationship: e.target.value })}>{RELATIONSHIPS.map(x => <option key={x}>{x}</option>)}</select></Field></div><div className="flex justify-end gap-2"><button type="button" className="btn btn-secondary" onClick={() => setOpen(false)}>Cancel</button><button type="submit" className="btn btn-primary">Save Student</button></div></form></Modal></div>;
 }
@@ -2553,14 +2583,7 @@ function PrincipalStudents() {
     })
   });
   const runAutoPromotion = async () => {
-    const term3Students = data.students.filter(student => evaluatePromotion(data, student, promotionYear).evaluated);
-    if (!term3Students.length) { notify('info', `No Term 3 grades were found for ${promotionYear}.`); return; }
-    await updateCollection('students', items => items.map(student => {
-      const result = evaluatePromotion(data, student, promotionYear);
-      if (!result.promoted || !result.nextClass || student.class_id === result.nextClass.id) return student;
-      return { ...student, class_id: result.nextClass.id, student_section: result.nextClass.section || '' };
-    }));
-    notify('success', `Auto promotion completed for ${promotionYear}.`);
+    await runAutoPromotionAcrossRecords({ data, updateCollection, notify, academicYear: promotionYear });
   };
   return <div className="space-y-4"><SectionHeader title="Student Management" subtitle={`View only student records with real time class filtering. Term 3 promotion status is evaluated from ${promotionYear} results.`} actions={<><Field label=""><select className="select" value={filterClass} onChange={e => setFilterClass(e.target.value)}><option value="">All classes</option>{data.classes.map(c => <option key={c.id} value={c.id}>{fullClassName(c)}</option>)}</select></Field><button onClick={runAutoPromotion} className="btn btn-outline"><i className="fas fa-arrow-up-right-dots mr-2"></i>Run Term 3 Auto Promotion</button><PrintButton label="Print Students Records" onClick={printStudents} /></>} /><Table columns={['Full Name','Student No','Assigned Class','Gender','Date of Birth','Parent Full Name','Parent Contact','Promotion Status','Account']} rows={rows} renderCell={(row,c) => { const promotion = evaluatePromotion(data, row, promotionYear); if (c === 'Full Name') return row.full_name; if (c === 'Student No') return row.student_number; if (c === 'Assigned Class') return fullClassName(data.classes.find(x => x.id === row.class_id)); if (c === 'Gender') return row.gender; if (c === 'Date of Birth') return row.dob; if (c === 'Parent Full Name') return row.parent_full_name; if (c === 'Parent Contact') return row.parent_phone_contact; if (c === 'Promotion Status') return <span className={`font-bold ${promotion.statusColor}`}>{promotion.statusText}</span>; if (c === 'Account') return <span className={`pill ${row.account_active ? 'online' : 'offline'}`}>{row.account_active ? 'Active' : 'Inactive'}</span>; }} /></div>;
 }
