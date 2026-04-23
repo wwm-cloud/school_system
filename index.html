@@ -164,12 +164,33 @@ function normalizeFooterThemeChoice(value) { return FOOTER_THEME_OPTIONS[value] 
 function normalizeFontChoice(value) { return FONT_OPTIONS[value] ? value : 'inter'; }
 function isThemeConstraintError(message) { return /school_settings_theme_choice_check|theme_choice/i.test(String(message || '')); }
 
-const defaultSchool = { school_name: 'Wood-World Missions Int. School', address: '', contact: '', location: '', logo_url: '', theme_choice: 'emerald', header_theme_choice: 'softWhite', footer_theme_choice: 'midnight', login_background_url: '', font_choice: 'inter', principal_signature_url: '' };
+const defaultSchool = { school_name: 'Wood-World Missions Int. School', address: '', contact: '', location: '', logo_url: '', theme_choice: 'emerald', header_theme_choice: 'softWhite', footer_theme_choice: 'midnight', login_background_url: '', font_choice: 'inter', principal_signature_url: '', audio_greeting_enabled: true, login_greeting_template: 'Welcome {firstName}, You may proceed.', logout_greeting_message: 'Goodbye, Nice having you on board.', failed_login_greeting_message: 'Login fails, please verify your identity carefully or contact your school IT department to ratify the issue.' };
 const uid = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
 const today = () => new Date().toISOString().slice(0,10);
 const safeArray = v => Array.isArray(v) ? v : [];
 
 const fullClassName = cls => cls ? [cls.name, cls.section].filter(Boolean).join(' ') : '';
+function extractTrailingSequence(value) {
+  const text = String(value || '').trim();
+  const match = text.match(/(\d+)(?!.*\d)/);
+  return match ? Number(match[1]) : Number.MAX_SAFE_INTEGER;
+}
+function compareIdentifierSequence(a, b) {
+  const seqDiff = extractTrailingSequence(a) - extractTrailingSequence(b);
+  if (seqDiff !== 0) return seqDiff;
+  return String(a || '').localeCompare(String(b || ''), undefined, { numeric: true, sensitivity: 'base' });
+}
+function sortTeachersByStaffNumber(items=[]) {
+  return [...safeArray(items)].sort((left, right) => compareIdentifierSequence(left?.staff_number, right?.staff_number));
+}
+function sortStudentsByStudentNumber(items=[]) {
+  return [...safeArray(items)].sort((left, right) => compareIdentifierSequence(left?.student_number, right?.student_number));
+}
+function nextGeneratedSequence(items=[], key='staff_number', startAt=1001) {
+  const sequences = safeArray(items).map(item => extractTrailingSequence(item?.[key])).filter(Number.isFinite);
+  const maxSequence = sequences.length ? Math.max(...sequences.filter(v => v !== Number.MAX_SAFE_INTEGER), startAt - 1) : (startAt - 1);
+  return maxSequence + 1;
+}
 function normalizeCrossModuleConsistency(raw={}) {
   const classes = safeArray(raw.classes);
   const subjects = safeArray(raw.subjects);
@@ -179,21 +200,21 @@ function normalizeCrossModuleConsistency(raw={}) {
   const subjectIds = new Set(subjects.map(item => item.id));
   const teacherIds = new Set(teachersBase.map(item => item.id));
 
-  const teachers = teachersBase.map(item => ({
+  const teachers = sortTeachersByStaffNumber(teachersBase.map(item => ({
     ...item,
     assigned_class_ids: safeArray(item.assigned_class_ids).filter(id => classIds.has(id)),
     assigned_subject_ids: safeArray(item.assigned_subject_ids).filter(id => subjectIds.has(id))
-  }));
+  })));
 
   const studentMap = new Map(studentsBase.map(item => [item.id, item]));
-  const students = studentsBase.map(item => {
+  const students = sortStudentsByStudentNumber(studentsBase.map(item => {
     const matchedClass = classes.find(cls => cls.id === item.class_id);
     return {
       ...item,
       class_id: matchedClass ? item.class_id : '',
       student_section: matchedClass ? (item.student_section || matchedClass.section || '') : (item.student_section || '')
     };
-  });
+  }));
   const normalizedStudentMap = new Map(students.map(item => [item.id, item]));
   const studentIds = new Set(students.map(item => item.id));
 
@@ -264,7 +285,11 @@ function normalizeCrossModuleConsistency(raw={}) {
       theme_choice: normalizeThemeChoice(raw.schoolSettings?.theme_choice || defaultSchool.theme_choice),
       header_theme_choice: normalizeHeaderThemeChoice(raw.schoolSettings?.header_theme_choice || defaultSchool.header_theme_choice),
       footer_theme_choice: normalizeFooterThemeChoice(raw.schoolSettings?.footer_theme_choice || defaultSchool.footer_theme_choice),
-      font_choice: normalizeFontChoice(raw.schoolSettings?.font_choice || defaultSchool.font_choice)
+      font_choice: normalizeFontChoice(raw.schoolSettings?.font_choice || defaultSchool.font_choice),
+      audio_greeting_enabled: ![false, 'false', 'False', 0, '0', 'No', 'NO', 'off', 'OFF'].includes(raw.schoolSettings?.audio_greeting_enabled),
+      login_greeting_template: String(raw.schoolSettings?.login_greeting_template || defaultSchool.login_greeting_template),
+      logout_greeting_message: String(raw.schoolSettings?.logout_greeting_message || defaultSchool.logout_greeting_message),
+      failed_login_greeting_message: String(raw.schoolSettings?.failed_login_greeting_message || defaultSchool.failed_login_greeting_message)
     },
     teachers,
     students,
@@ -733,41 +758,41 @@ function buildStudentGradeReportHtml({ school, student, classLabel, term, year, 
 <style>
   * { box-sizing: border-box; font-family: Arial, sans-serif; }
   body { margin: 0; background: #f3f4f6; color: #111827; }
-  .page { width: 210mm; min-height: 297mm; margin: 0 auto; background: white; padding: 14mm 12mm; }
-  .head { border: 3px solid #0f766e; border-radius: 20px; padding: 14px 18px; background: linear-gradient(135deg,#ecfeff,#f0fdf4); }
+  .page { width: 210mm; height: 297mm; margin: 0 auto; background: white; padding: 8mm 8mm 7mm; overflow: hidden; }
+  .head { border: 2px solid #0f766e; border-radius: 16px; padding: 10px 12px; background: linear-gradient(135deg,#ecfeff,#f0fdf4); }
   .head-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
   .school-center { flex: 1; text-align: center; }
-  .school-name { font-size: 28px; font-weight: 900; color: #115e59; letter-spacing: .6px; }
-  .school-sub { font-size: 14px; font-weight: 700; color: #334155; margin-top: 4px; }
-  .title { margin-top: 16px; text-align: center; font-size: 22px; font-weight: 900; color: #1e3a8a; text-transform: uppercase; text-decoration: underline; }
-  .identity-wrap { margin-top: 18px; display: grid; grid-template-columns: 1fr 120px; gap: 18px; align-items: start; }
-  .meta { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 26px; font-size: 14px; }
-  .meta div { padding-bottom: 6px; border-bottom: 1px dashed #94a3b8; }
+  .school-name { font-size: 22px; font-weight: 900; color: #115e59; letter-spacing: .4px; line-height: 1.15; }
+  .school-sub { font-size: 12px; font-weight: 700; color: #334155; margin-top: 2px; line-height: 1.2; }
+  .title { margin-top: 10px; text-align: center; font-size: 18px; font-weight: 900; color: #1e3a8a; text-transform: uppercase; text-decoration: underline; }
+  .identity-wrap { margin-top: 10px; display: grid; grid-template-columns: 1fr 104px; gap: 12px; align-items: start; }
+  .meta { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px; font-size: 12px; }
+  .meta div { padding-bottom: 4px; border-bottom: 1px dashed #94a3b8; }
   .meta strong { color: #0f172a; }
   .student-photo-box { display:flex; justify-content:flex-end; }
-  .section-title { margin: 22px 0 10px; text-align: center; font-size: 18px; font-weight: 900; color: #7c2d12; letter-spacing: 2px; text-transform: uppercase; }
+  .section-title { margin: 12px 0 8px; text-align: center; font-size: 15px; font-weight: 900; color: #7c2d12; letter-spacing: 1px; text-transform: uppercase; }
   table { width: 100%; border-collapse: collapse; }
-  th, td { border: 1px solid #64748b; padding: 8px 7px; font-size: 13px; text-align: center; }
+  th, td { border: 1px solid #64748b; padding: 5px 4px; font-size: 11px; text-align: center; line-height: 1.2; }
   th { background: #dbeafe; color: #1e3a8a; font-weight: 800; }
   tbody tr:nth-child(even) { background: #f8fafc; }
-  .summary { margin-top: 14px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
-  .sum-card { border: 1px solid #cbd5e1; border-radius: 14px; padding: 10px; background: #f8fafc; text-align: center; }
-  .sum-card b { display: block; font-size: 13px; color: #475569; margin-bottom: 6px; }
-  .sum-card span { font-size: 20px; font-weight: 900; color: #0f766e; }
-  .remarks { margin-top: 18px; display: grid; gap: 12px; }
-  .remarks .box { min-height: 64px; border: 1px dashed #94a3b8; border-radius: 12px; padding: 10px 12px; }
-  .remarks .label { font-weight: 800; color: #1e293b; margin-bottom: 6px; }
-  .remarks .headmaster-auto-text { color: #1d4ed8; font-weight: 700; line-height: 1.6; }
-  .foot { margin-top: 24px; display: flex; justify-content: center; }
-  .signature-block { width: 320px; text-align: center; }
-  .signature-wrap { min-height: 88px; display: flex; align-items: flex-end; justify-content: center; background: white; }
-  .signature-image { max-width: 190px; max-height: 82px; object-fit: contain; display:block; background: transparent; }
-  .signature-space { height: 72px; }
-  .principal-name-line { font-size: 14px; font-weight: 700; margin-bottom: 6px; min-height: 20px; }
+  .summary { margin-top: 8px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .sum-card { border: 1px solid #cbd5e1; border-radius: 10px; padding: 7px; background: #f8fafc; text-align: center; }
+  .sum-card b { display: block; font-size: 11px; color: #475569; margin-bottom: 4px; }
+  .sum-card span { font-size: 16px; font-weight: 900; color: #0f766e; }
+  .remarks { margin-top: 8px; display: grid; gap: 8px; }
+  .remarks .box { min-height: 48px; border: 1px dashed #94a3b8; border-radius: 10px; padding: 7px 9px; font-size: 11px; }
+  .remarks .label { font-weight: 800; color: #1e293b; margin-bottom: 4px; font-size: 11px; }
+  .remarks .headmaster-auto-text { color: #1d4ed8; font-weight: 700; line-height: 1.35; font-size: 11px; }
+  .foot { margin-top: 10px; display: flex; justify-content: center; }
+  .signature-block { width: 260px; text-align: center; }
+  .signature-wrap { min-height: 64px; display: flex; align-items: flex-end; justify-content: center; background: white; }
+  .signature-image { max-width: 150px; max-height: 60px; object-fit: contain; display:block; background: transparent; }
+  .signature-space { height: 48px; }
+  .principal-name-line { font-size: 12px; font-weight: 700; margin-bottom: 4px; min-height: 16px; }
   .sign-line { border-bottom: 1px solid #334155; height: 1px; margin-bottom: 6px; }
-  .sign-role { font-size: 13px; font-weight: 700; }
-  .note { margin-top: 16px; text-align: center; font-size: 12px; color: #7f1d1d; font-weight: 700; }
-  @media print { body { background: white; } .page { width: auto; min-height: auto; padding: 8mm; } }
+  .sign-role { font-size: 11px; font-weight: 700; }
+  .note { margin-top: 8px; text-align: center; font-size: 10px; color: #7f1d1d; font-weight: 700; line-height: 1.25; }
+  @media print { body { background: white; } .page { width: auto; height: 297mm; padding: 8mm 8mm 7mm; overflow: hidden; } }
 </style>
 </head>
 <body>
@@ -792,7 +817,7 @@ function buildStudentGradeReportHtml({ school, student, classLabel, term, year, 
           <div><strong>Form / Level:</strong> ${classLabel || ''}</div>
           ${promotionMetaHtml}
         </div>
-        <div class="student-photo-box">${studentPhotoHtml}</div>
+        <div class="student-photo-box" style="justify-content:flex-end;align-items:flex-start;">${studentPhotoHtml}</div>
       </div>
     </div>
 
@@ -1597,7 +1622,11 @@ function usePersistentSchoolData() {
       footer_theme_choice: normalizeFooterThemeChoice(nextVal.footer_theme_choice || 'midnight'),
       login_background_url: nextVal.login_background_url || null,
       font_choice: normalizeFontChoice(nextVal.font_choice || 'inter'),
-      principal_signature_url: nextVal.principal_signature_url || null
+      principal_signature_url: nextVal.principal_signature_url || null,
+      audio_greeting_enabled: ![false, 'false', 'False', 0, '0', 'No', 'NO', 'off', 'OFF'].includes(nextVal.audio_greeting_enabled),
+      login_greeting_template: String(nextVal.login_greeting_template || defaultSchool.login_greeting_template),
+      logout_greeting_message: String(nextVal.logout_greeting_message || defaultSchool.logout_greeting_message),
+      failed_login_greeting_message: String(nextVal.failed_login_greeting_message || defaultSchool.failed_login_greeting_message)
     };
     let { error } = await supabase.from('school_settings').update(payload).eq('id', 1);
     if (error && /header_theme_choice|footer_theme_choice|login_background_url|font_choice/i.test(String(error.message || '')) && /column/i.test(String(error.message || ''))) {
@@ -1606,13 +1635,17 @@ function usePersistentSchoolData() {
       delete fallbackPayload.footer_theme_choice;
       delete fallbackPayload.login_background_url;
       delete fallbackPayload.font_choice;
+      delete fallbackPayload.audio_greeting_enabled;
+      delete fallbackPayload.login_greeting_template;
+      delete fallbackPayload.logout_greeting_message;
+      delete fallbackPayload.failed_login_greeting_message;
       const fallback = await supabase.from('school_settings').update(fallbackPayload).eq('id', 1);
       error = fallback.error;
     }
     if (error && isThemeConstraintError(error.message)) {
       throw new Error('The backend theme list is outdated. Run the latest theme SQL update, then try saving the theme again.');
     }
-    if (error && /login_background_url|font_choice/i.test(String(error.message || ''))) {
+    if (error && /login_background_url|font_choice|audio_greeting_enabled|login_greeting_template|logout_greeting_message|failed_login_greeting_message/i.test(String(error.message || ''))) {
       throw new Error('The backend personalization columns are missing. Run the latest personalization SQL update, then save again.');
     }
     if (error) throw error;
@@ -1917,6 +1950,24 @@ function extractFirstName(fullName) {
   if (!cleaned) return 'User';
   return cleaned.split(' ')[0] || 'User';
 }
+function resolveGreetingMessage(template, fallback, context={}) {
+  const source = String(template || '').trim() || String(fallback || '').trim();
+  if (!source) return '';
+  return source
+    .replace(/\{firstName\}/gi, context.firstName || 'User')
+    .replace(/\{fullname\}|\{fullName\}|\{name\}/gi, context.fullName || context.firstName || 'User')
+    .replace(/\{schoolName\}/gi, context.schoolName || defaultSchool.school_name || 'School Management System')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+function isAudioGreetingEnabled(schoolSettings={}) {
+  const value = schoolSettings?.audio_greeting_enabled;
+  return ![false, 'false', 'False', 0, '0', 'No', 'NO', 'off', 'OFF'].includes(value);
+}
+function maybeSpeakGreeting(schoolSettings={}, message='') {
+  if (!isAudioGreetingEnabled(schoolSettings)) return;
+  speakMessage(message);
+}
 function speakMessage(message) {
   if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
   const text = String(message || '').trim();
@@ -2041,13 +2092,15 @@ function App() {
     setForcePasswordModal(credential.force_password_change === 'Yes');
     const displayName = resolveCredentialDisplayName(store.data, credential);
     const firstName = extractFirstName(displayName);
-    speakMessage(`Welcome ${firstName}, You may proceed.`);
+    const greetingMessage = resolveGreetingMessage(store.data.schoolSettings?.login_greeting_template, defaultSchool.login_greeting_template, { firstName, fullName: displayName, schoolName: store.data.schoolSettings?.school_name || defaultSchool.school_name });
+    maybeSpeakGreeting(store.data.schoolSettings, greetingMessage);
     return credential;
   }, [store]);
 
   const logout = React.useCallback(async () => {
     if (session.role) await store.setPresenceStatus(session.role, session.linkedId, false);
-    speakMessage('Goodbye, Nice having you on board.');
+    const goodbyeMessage = resolveGreetingMessage(store.data.schoolSettings?.logout_greeting_message, defaultSchool.logout_greeting_message, { schoolName: store.data.schoolSettings?.school_name || defaultSchool.school_name });
+    maybeSpeakGreeting(store.data.schoolSettings, goodbyeMessage);
     clearAppUserSession();
     setSession({ role: null, linkedId: null, credentialId: null, username: '' });
     setActiveNav('dashboard');
@@ -2106,7 +2159,8 @@ function LoginScreen() {
       const loginErrorMessage = err?.message || 'Login failed.';
       setError(loginErrorMessage);
       notify('error', loginErrorMessage);
-      speakMessage('Login fails, please verify your identity carefully or contact your school IT department to ratify the issue.');
+      const failedMessage = resolveGreetingMessage(data.schoolSettings?.failed_login_greeting_message, defaultSchool.failed_login_greeting_message, { schoolName: data.schoolSettings?.school_name || defaultSchool.school_name });
+      maybeSpeakGreeting(data.schoolSettings, failedMessage);
     } finally {
       setLoading(false);
     }
@@ -2383,7 +2437,7 @@ function TeacherManagement() {
       'Account': row.account_active ? 'Active' : 'Inactive'
     }))
   });
-  const save = async e => { e.preventDefault(); const prefix = numberPrefix(data.schoolSettings.school_name, 'TCH'); const payload = { ...form, id: form.id || uid(), staff_number: form.staff_number || `${prefix}${String(data.teachers.length + 1001).padStart(5,'0')}`, account_active: form.account_active ?? true }; validateCollectionRecord('teacher', payload, data.teachers); await updateCollection('teachers', items => items.some(x => x.id === payload.id) ? items.map(x => x.id === payload.id ? payload : x) : [...items, payload]); setOpen(false); setForm(emptyTeacher); };
+  const save = async e => { e.preventDefault(); const prefix = numberPrefix(data.schoolSettings.school_name, 'TCH'); const nextSequence = nextGeneratedSequence(data.teachers, 'staff_number', 1001); const payload = { ...form, id: form.id || uid(), staff_number: form.staff_number || `${prefix}${String(nextSequence).padStart(5,'0')}`, account_active: form.account_active ?? true }; validateCollectionRecord('teacher', payload, data.teachers); await updateCollection('teachers', items => items.some(x => x.id === payload.id) ? items.map(x => x.id === payload.id ? payload : x) : [...items, payload]); setOpen(false); setForm(emptyTeacher); };
   const edit = t => { setForm(t); setOpen(true); };
   const remove = async id => { if (!confirmDeleteAction('this teacher record')) return; await updateCollection('teachers', items => items.filter(x => x.id !== id)); };
   return <div className="space-y-4"><SectionHeader title="Teachers Management" subtitle="Assign classes and subjects only from School Admin Classes and Subjects." actions={<><PrintButton label="Print Teachers Records" onClick={printTeachers} /><button onClick={() => { setForm(emptyTeacher); setOpen(true); }} className="btn btn-primary"><i className="fas fa-plus mr-2"></i>Add Teacher</button></>} /><Table columns={['Photo','Staff No','Full Name','Assigned Subjects','Assigned Classes','Qualification','EMIS','Ghana Card','Gender','Date of Birth','Training','Primary Specialty','Account','Actions']} rows={data.teachers} renderCell={(row,c) => { if (c === 'Photo') return row.photo_url ? <img src={row.photo_url} className="w-10 h-10 rounded-full object-cover" /> : <i className="fas fa-user-circle text-2xl text-slate-400"></i>; if (c === 'Staff No') return row.staff_number; if (c === 'Full Name') return row.full_name; if (c === 'Assigned Subjects') return teacherSubjectNames(row); if (c === 'Assigned Classes') return teacherClassNames(row); if (c === 'Qualification') return row.qualification; if (c === 'EMIS') return row.emis_code; if (c === 'Ghana Card') return row.ghana_card; if (c === 'Gender') return row.gender; if (c === 'Date of Birth') return row.dob; if (c === 'Training') return row.trained; if (c === 'Primary Specialty') return row.primary_specialty; if (c === 'Account') return <span className={`pill ${row.account_active ? 'online' : 'offline'}`}>{row.account_active ? 'Active' : 'Inactive'}</span>; if (c === 'Actions') return <div className="flex gap-2"><button className="btn btn-outline" onClick={() => edit(row)}>Edit</button><button className="btn btn-danger" onClick={() => remove(row.id)}>Delete</button></div>; }} /><Modal open={open} onClose={() => setOpen(false)} title={form.id ? 'Edit Teacher' : 'Add Teacher'} max="max-w-5xl"><form onSubmit={save} className="space-y-4"><ImageInput label="Teacher Photo" storageFolder="teachers" value={form.photo_url} onChange={v => setForm({ ...form, photo_url: v })} /><div className="grid md:grid-cols-2 gap-4"><Field label="Full Name"><input className="input" required value={form.full_name} onChange={e => setForm({ ...form, full_name: e.target.value })} /></Field><Field label="Teacher EMIS Code"><input className="input" value={form.emis_code} onChange={e => setForm({ ...form, emis_code: e.target.value })} /></Field><Field label="Ghana Card"><input className="input" value={form.ghana_card} onChange={e => setForm({ ...form, ghana_card: e.target.value })} /></Field><Field label="Gender"><select className="select" value={form.gender} onChange={e => setForm({ ...form, gender: e.target.value })}>{GENDERS.map(x => <option key={x}>{x}</option>)}</select></Field><Field label="Date of Birth"><input type="date" className="input" value={form.dob} onChange={e => setForm({ ...form, dob: e.target.value })} /></Field><Field label="Qualification"><select className="select" value={form.qualification} onChange={e => setForm({ ...form, qualification: e.target.value })}>{QUALIFICATIONS.map(x => <option key={x}>{x}</option>)}</select></Field><Field label="Training Status"><select className="select" value={form.trained} onChange={e => setForm({ ...form, trained: e.target.value })}>{TRAINING_STATUS.map(x => <option key={x}>{x}</option>)}</select></Field><Field label="Primary Specialty"><input className="input" value={form.primary_specialty} onChange={e => setForm({ ...form, primary_specialty: e.target.value })} /></Field><Field label="Contact Address"><input className="input" value={form.contact_address} onChange={e => setForm({ ...form, contact_address: e.target.value })} /></Field><Field label="Staff Number"><input className="input" value={form.staff_number} readOnly placeholder="Auto generated by school name" /></Field></div><MultiCheckbox label="Assign Subjects" items={data.subjects} value={form.assigned_subject_ids} onChange={v => setForm({ ...form, assigned_subject_ids: v })} getLabel={s => `${s.name}${s.code ? ` (${s.code})` : ''}`} /><MultiCheckbox label="Assign Classes" items={data.classes} value={form.assigned_class_ids} onChange={v => setForm({ ...form, assigned_class_ids: v })} getLabel={c => fullClassName(c)} /><div className="flex justify-end gap-2"><button type="button" className="btn btn-secondary" onClick={() => setOpen(false)}>Cancel</button><button type="submit" className="btn btn-primary">Save Teacher</button></div></form></Modal></div>;
@@ -2414,7 +2468,7 @@ function StudentManagement() {
       };
     })
   });
-  const save = async e => { e.preventDefault(); const prefix = numberPrefix(data.schoolSettings.school_name, 'STU'); const selectedClass = data.classes.find(c => c.id === form.class_id); const payload = { ...form, id: form.id || uid(), student_number: form.student_number || `${prefix}${String(data.students.length + 2001).padStart(5,'0')}`, student_section: form.student_section || selectedClass?.section || '', account_active: form.account_active ?? true }; validateCollectionRecord('student', payload, data.students); await updateCollection('students', items => items.some(x => x.id === payload.id) ? items.map(x => x.id === payload.id ? payload : x) : [...items, payload]); setOpen(false); setForm(emptyStudent); };
+  const save = async e => { e.preventDefault(); const prefix = numberPrefix(data.schoolSettings.school_name, 'STU'); const selectedClass = data.classes.find(c => c.id === form.class_id); const nextSequence = nextGeneratedSequence(data.students, 'student_number', 2001); const payload = { ...form, id: form.id || uid(), student_number: form.student_number || `${prefix}${String(nextSequence).padStart(5,'0')}`, student_section: form.student_section || selectedClass?.section || '', account_active: form.account_active ?? true }; validateCollectionRecord('student', payload, data.students); await updateCollection('students', items => items.some(x => x.id === payload.id) ? items.map(x => x.id === payload.id ? payload : x) : [...items, payload]); setOpen(false); setForm(emptyStudent); };
   const edit = s => { setForm(s); setOpen(true); }; const remove = async id => { if (!confirmDeleteAction('this student record')) return; await updateCollection('students', items => items.filter(x => x.id !== id)); };
   const runAutoPromotion = async () => {
     await runAutoPromotionAcrossRecords({ data, updateCollection, notify, addArchiveRecord, academicYear: promotionYear });
@@ -2520,15 +2574,30 @@ function SchoolSettingsManager() {
   const [form, setForm] = React.useState(data.schoolSettings);
   React.useEffect(() => setForm(data.schoolSettings), [data.schoolSettings]);
 
-  const save = async e => {
-    e.preventDefault();
-    await setSchoolSettings({
-      ...form,
+  const saveSchoolDetails = async () => {
+    await setSchoolSettings(current => ({
+      ...current,
+      school_name: form.school_name,
+      address: form.address || '',
+      contact: form.contact || '',
+      location: form.location || '',
+      logo_url: form.logo_url || ''
+    }));
+  };
+
+  const savePersonalization = async () => {
+    await setSchoolSettings(current => ({
+      ...current,
       theme_choice: normalizeThemeChoice(themeChoice),
       header_theme_choice: normalizeHeaderThemeChoice(form.header_theme_choice || 'softWhite'),
       footer_theme_choice: normalizeFooterThemeChoice(form.footer_theme_choice || 'midnight'),
-      font_choice: normalizeFontChoice(form.font_choice || 'inter')
-    });
+      login_background_url: form.login_background_url || '',
+      font_choice: normalizeFontChoice(form.font_choice || 'inter'),
+      audio_greeting_enabled: form.audio_greeting_enabled !== false,
+      login_greeting_template: form.login_greeting_template || defaultSchool.login_greeting_template,
+      logout_greeting_message: form.logout_greeting_message || defaultSchool.logout_greeting_message,
+      failed_login_greeting_message: form.failed_login_greeting_message || defaultSchool.failed_login_greeting_message
+    }));
   };
 
   const previewTheme = key => setThemeChoice(normalizeThemeChoice(key));
@@ -2549,69 +2618,123 @@ function SchoolSettingsManager() {
     setForm(nextForm);
     applyTheme(themeChoice, nextForm.header_theme_choice || 'softWhite', next);
   };
+  const toggleAudioGreeting = async () => {
+    const nextEnabled = !(form.audio_greeting_enabled !== false);
+    const nextForm = { ...form, audio_greeting_enabled: nextEnabled };
+    setForm(nextForm);
+    await setSchoolSettings(current => ({ ...current, audio_greeting_enabled: nextEnabled }));
+  };
 
   return <div className="space-y-4">
-    <SectionHeader title="School Logo, Details and Personalization" subtitle="School Admin can update school details and keep every personalization control together in one unified section." />
-    <div className="card p-5 max-w-6xl">
-      <form onSubmit={save} className="space-y-6">
-        <div className="grid lg:grid-cols-2 gap-6 items-start">
-          <div className="space-y-4">
-            <ImageInput label="School Logo" storageFolder="school-logo" value={form.logo_url} onChange={v => setForm({ ...form, logo_url: v })} />
-            <div className="grid md:grid-cols-2 gap-4">
-              <Field label="School Full Name"><input className="input" value={form.school_name} onChange={e => setForm({ ...form, school_name: e.target.value })} /></Field>
-              <Field label="Address"><input className="input" value={form.address} onChange={e => setForm({ ...form, address: e.target.value })} /></Field>
-              <Field label="Contact"><input className="input" value={form.contact} onChange={e => setForm({ ...form, contact: e.target.value })} /></Field>
-              <Field label="Location"><input className="input" value={form.location} onChange={e => setForm({ ...form, location: e.target.value })} /></Field>
+    <SectionHeader title="School Logo, Details and Personalization" subtitle="School Admin can update school details and manage all personalization controls from one compact section." />
+    <div className="card p-4 md:p-5 max-w-6xl">
+      <div className="grid xl:grid-cols-[1fr_1.2fr] gap-5 items-start">
+        <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4">
+          <div className="flex items-center justify-between gap-3 border-b border-slate-200 pb-3">
+            <div>
+              <div className="font-bold text-lg">School Details</div>
+              <div className="text-sm text-slate-500 mt-1">Update the school logo and official school information here.</div>
             </div>
+            <button type="button" className="btn btn-primary" onClick={saveSchoolDetails}>Save School Details</button>
           </div>
-          <div className="space-y-4 border rounded-2xl p-4 bg-slate-50">
+          <ImageInput label="School Logo" storageFolder="school-logo" value={form.logo_url} onChange={v => setForm({ ...form, logo_url: v })} />
+          <div className="grid md:grid-cols-2 gap-4">
+            <Field label="School Full Name"><input className="input" value={form.school_name} onChange={e => setForm({ ...form, school_name: e.target.value })} /></Field>
+            <Field label="Address"><input className="input" value={form.address} onChange={e => setForm({ ...form, address: e.target.value })} /></Field>
+            <Field label="Contact"><input className="input" value={form.contact} onChange={e => setForm({ ...form, contact: e.target.value })} /></Field>
+            <Field label="Location"><input className="input" value={form.location} onChange={e => setForm({ ...form, location: e.target.value })} /></Field>
+          </div>
+        </div>
+
+        <div className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 pb-3">
             <div>
               <div className="font-bold text-lg">Personalization (School Admin only)</div>
-              <div className="text-sm text-slate-500 mt-1">All appearance controls now stay together here, including login background image, system font, main theme, header theme, and footer theme.</div>
+              <div className="text-sm text-slate-500 mt-1">Login background, fonts, themes, and audio greeting controls now stay together here in a compact horizontal layout.</div>
             </div>
-            <ImageInput label="Login Screen Background Image" storageFolder="login-background" value={form.login_background_url || ''} onChange={v => setForm({ ...form, login_background_url: v })} />
-            <div className="theme-preview-swatch relative" style={form.login_background_url ? { backgroundImage: `linear-gradient(rgba(15,23,42,.42), rgba(15,23,42,.30)), url(${form.login_background_url})`, backgroundSize: 'cover', backgroundPosition: 'center' } : { background: 'linear-gradient(135deg, #dbe4ee 0%, #94a3b8 50%, #475569 100%)' }}>
-              <div className="absolute inset-0 p-4 flex flex-col justify-between text-white">
-                <div className="inline-flex w-fit items-center gap-2 rounded-full bg-white/20 px-3 py-1 text-xs font-bold uppercase tracking-[0.2em] backdrop-blur">Login Preview</div>
-                <div>
-                  <div className="text-xl font-extrabold">{form.school_name || 'School Management System'}</div>
-                  <div className="text-sm text-white/90">Background image for the login page only</div>
+            <button type="button" className="btn btn-primary" onClick={savePersonalization}>Save Personalization</button>
+          </div>
+
+          <div className="grid lg:grid-cols-[1.1fr_.9fr] gap-4 items-start border-b border-slate-200 pb-4">
+            <div className="space-y-3">
+              <ImageInput label="Login Screen Background Image" storageFolder="login-background" value={form.login_background_url || ''} onChange={v => setForm({ ...form, login_background_url: v })} />
+              <div className="theme-preview-swatch relative min-h-[140px]" style={form.login_background_url ? { backgroundImage: `linear-gradient(rgba(15,23,42,.42), rgba(15,23,42,.30)), url(${form.login_background_url})`, backgroundSize: 'cover', backgroundPosition: 'center' } : { background: 'linear-gradient(135deg, #dbe4ee 0%, #94a3b8 50%, #475569 100%)' }}>
+                <div className="absolute inset-0 p-4 flex flex-col justify-between text-white">
+                  <div className="inline-flex w-fit items-center gap-2 rounded-full bg-white/20 px-3 py-1 text-xs font-bold uppercase tracking-[0.2em] backdrop-blur">Login Preview</div>
+                  <div>
+                    <div className="text-lg md:text-xl font-extrabold leading-tight">{form.school_name || 'School Management System'}</div>
+                    <div className="text-sm text-white/90">Background image for the login page only</div>
+                  </div>
                 </div>
               </div>
             </div>
-            <div className="grid md:grid-cols-2 gap-4">
+            <div className="grid sm:grid-cols-2 gap-4">
               <Field label="System Font"><select className="select" value={form.font_choice || 'inter'} onChange={e => previewFont(e.target.value)}>{Object.entries(FONT_OPTIONS).map(([key, val]) => <option key={key} value={key}>{val.label}</option>)}</select></Field>
               <Field label="Main System Theme"><select className="select" value={themeChoice} onChange={e => previewTheme(e.target.value)}>{Object.entries(THEME_OPTIONS).map(([key, val]) => <option key={key} value={key}>{val.label}</option>)}</select></Field>
               <Field label="Header Theme"><select className="select" value={form.header_theme_choice || 'softWhite'} onChange={e => previewHeaderTheme(e.target.value)}>{Object.entries(HEADER_THEME_OPTIONS).map(([key, val]) => <option key={key} value={key}>{val.label}</option>)}</select></Field>
               <Field label="Footer Theme"><select className="select" value={form.footer_theme_choice || 'midnight'} onChange={e => previewFooterTheme(e.target.value)}>{Object.entries(FOOTER_THEME_OPTIONS).map(([key, val]) => <option key={key} value={key}>{val.label}</option>)}</select></Field>
             </div>
-            <div className="grid md:grid-cols-2 gap-4">
-              <div className="theme-preview-swatch">
-                <div className="h-full flex flex-col" style={{ background: (HEADER_THEME_OPTIONS[form.header_theme_choice || 'softWhite'] || HEADER_THEME_OPTIONS.softWhite).bg }}>
-                  <div className="px-4 py-3 flex items-center justify-between" style={{ color: (HEADER_THEME_OPTIONS[form.header_theme_choice || 'softWhite'] || HEADER_THEME_OPTIONS.softWhite).text }}>
-                    <div className="font-extrabold">Header Preview</div>
-                    <div className="rounded-full px-3 py-1 text-xs font-bold" style={{ background: (HEADER_THEME_OPTIONS[form.header_theme_choice || 'softWhite'] || HEADER_THEME_OPTIONS.softWhite).accent, color: (HEADER_THEME_OPTIONS[form.header_theme_choice || 'softWhite'] || HEADER_THEME_OPTIONS.softWhite).text }}>Refresh</div>
-                  </div>
-                  <div className="px-4 pb-4 text-sm" style={{ color: (HEADER_THEME_OPTIONS[form.header_theme_choice || 'softWhite'] || HEADER_THEME_OPTIONS.softWhite).text }}>Header theme now responds more strongly when selected and applied.</div>
+          </div>
+
+          <div className="grid lg:grid-cols-2 gap-4 border-b border-slate-200 pb-4">
+            <div className="theme-preview-swatch overflow-hidden">
+              <div className="h-full flex flex-col" style={{ background: (HEADER_THEME_OPTIONS[form.header_theme_choice || 'softWhite'] || HEADER_THEME_OPTIONS.softWhite).bg }}>
+                <div className="px-4 py-3 flex items-center justify-between" style={{ color: (HEADER_THEME_OPTIONS[form.header_theme_choice || 'softWhite'] || HEADER_THEME_OPTIONS.softWhite).text }}>
+                  <div className="font-extrabold">Header Preview</div>
+                  <div className="rounded-full px-3 py-1 text-xs font-bold shadow-sm" style={{ background: (HEADER_THEME_OPTIONS[form.header_theme_choice || 'softWhite'] || HEADER_THEME_OPTIONS.softWhite).accent, color: (HEADER_THEME_OPTIONS[form.header_theme_choice || 'softWhite'] || HEADER_THEME_OPTIONS.softWhite).text }}>Refresh</div>
                 </div>
-              </div>
-              <div className="theme-preview-swatch">
-                <div className="h-full flex flex-col justify-end p-4" style={{ background: (FOOTER_THEME_OPTIONS[form.footer_theme_choice || 'midnight'] || FOOTER_THEME_OPTIONS.midnight).bg, color: (FOOTER_THEME_OPTIONS[form.footer_theme_choice || 'midnight'] || FOOTER_THEME_OPTIONS.midnight).text }}>
-                  <div className="font-extrabold">Footer Preview</div>
-                  <div className="text-sm opacity-90">Footer theme now responds equally when selected and applied.</div>
-                  <div className="mt-3 inline-flex w-fit items-center gap-2 rounded-full px-3 py-1 text-xs font-bold" style={{ background: 'color-mix(in srgb, ' + ((FOOTER_THEME_OPTIONS[form.footer_theme_choice || 'midnight'] || FOOTER_THEME_OPTIONS.midnight).accent) + ' 24%, transparent)', color: (FOOTER_THEME_OPTIONS[form.footer_theme_choice || 'midnight'] || FOOTER_THEME_OPTIONS.midnight).text }}><span className="w-2.5 h-2.5 rounded-full" style={{ background: (FOOTER_THEME_OPTIONS[form.footer_theme_choice || 'midnight'] || FOOTER_THEME_OPTIONS.midnight).accent }}></span>Footer theme chip</div>
-                </div>
+                <div className="px-4 pb-4 text-sm font-medium" style={{ color: (HEADER_THEME_OPTIONS[form.header_theme_choice || 'softWhite'] || HEADER_THEME_OPTIONS.softWhite).text }}>Header theme response is stronger across the full header area when selected and applied.</div>
               </div>
             </div>
-            <div>
-              <div className="text-sm font-semibold text-slate-700 mb-3">Quick theme buttons</div>
-              <div className="flex flex-wrap gap-3">{Object.entries(THEME_OPTIONS).map(([key, val]) => <button key={key} type="button" onClick={() => previewTheme(key)} className={`px-4 py-3 rounded-xl border ${themeChoice === key ? 'ring-2 ring-offset-2' : ''}`} style={{ background: val.primarySoft, borderColor: val.primary }}><span className="inline-flex items-center gap-2"><span className="w-4 h-4 rounded-full" style={{ background: val.primary }}></span>{val.label}</span></button>)}</div>
+            <div className="theme-preview-swatch overflow-hidden">
+              <div className="h-full flex flex-col justify-end p-4" style={{ background: (FOOTER_THEME_OPTIONS[form.footer_theme_choice || 'midnight'] || FOOTER_THEME_OPTIONS.midnight).bg, color: (FOOTER_THEME_OPTIONS[form.footer_theme_choice || 'midnight'] || FOOTER_THEME_OPTIONS.midnight).text }}>
+                <div className="font-extrabold">Footer Preview</div>
+                <div className="text-sm opacity-90">Footer theme response is stronger across the full footer area when selected and applied.</div>
+                <div className="mt-3 inline-flex w-fit items-center gap-2 rounded-full px-3 py-1 text-xs font-bold" style={{ background: 'color-mix(in srgb, ' + ((FOOTER_THEME_OPTIONS[form.footer_theme_choice || 'midnight'] || FOOTER_THEME_OPTIONS.midnight).accent) + ' 24%, transparent)', color: (FOOTER_THEME_OPTIONS[form.footer_theme_choice || 'midnight'] || FOOTER_THEME_OPTIONS.midnight).text }}><span className="w-2.5 h-2.5 rounded-full" style={{ background: (FOOTER_THEME_OPTIONS[form.footer_theme_choice || 'midnight'] || FOOTER_THEME_OPTIONS.midnight).accent }}></span>Footer theme chip</div>
+              </div>
             </div>
-            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">All personalization now stays unified here for the School Admin only.</div>
+          </div>
+
+          <div className="space-y-3 border-b border-slate-200 pb-4">
+            <div className="text-sm font-semibold text-slate-700">Quick Theme Buttons</div>
+            <div className="flex flex-wrap gap-3">{Object.entries(THEME_OPTIONS).map(([key, val]) => <button key={key} type="button" onClick={() => previewTheme(key)} className={`px-4 py-2.5 rounded-xl border ${themeChoice === key ? 'ring-2 ring-offset-2' : ''}`} style={{ background: val.primarySoft, borderColor: val.primary }}><span className="inline-flex items-center gap-2"><span className="w-4 h-4 rounded-full" style={{ background: val.primary }}></span>{val.label}</span></button>)}</div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-3">
+              <div>
+                <div className="font-bold text-base">Audio Greeting Personalization</div>
+                <div className="text-sm text-slate-500 mt-1">Turn greetings off or on, and customize the spoken messages for login, logout, and failed login.</div>
+              </div>
+              <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                <div>
+                  <div className="font-semibold text-slate-800">Audio Greeting Switch</div>
+                  <div className="text-xs text-slate-500">This switch applies immediately across the system and is also saved for future logins and logouts.</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={toggleAudioGreeting}
+                  className={`relative inline-flex h-11 w-24 items-center rounded-full transition ${form.audio_greeting_enabled !== false ? 'bg-emerald-600' : 'bg-slate-300'}`}
+                  aria-pressed={form.audio_greeting_enabled !== false}
+                >
+                  <span className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-white text-xs font-bold text-slate-700 shadow transition" style={{ transform: `translateX(${form.audio_greeting_enabled !== false ? '48px' : '4px'})` }}>{form.audio_greeting_enabled !== false ? 'ON' : 'OFF'}</span>
+                </button>
+              </div>
+            </div>
+            <div className="grid lg:grid-cols-3 gap-4">
+              <Field label="Login Audio Message">
+                <textarea className="textarea" rows="3" value={form.login_greeting_template || ''} onChange={e => setForm({ ...form, login_greeting_template: e.target.value })} placeholder="Use {firstName} where the user's first name should be spoken." />
+              </Field>
+              <Field label="Logout Audio Message">
+                <textarea className="textarea" rows="3" value={form.logout_greeting_message || ''} onChange={e => setForm({ ...form, logout_greeting_message: e.target.value })} />
+              </Field>
+              <Field label="Failed Login Audio Message">
+                <textarea className="textarea" rows="3" value={form.failed_login_greeting_message || ''} onChange={e => setForm({ ...form, failed_login_greeting_message: e.target.value })} />
+              </Field>
+            </div>
           </div>
         </div>
-        <button type="submit" className="btn btn-primary">Save School Details and Personalization</button>
-      </form>
+      </div>
     </div>
   </div>;
 }
