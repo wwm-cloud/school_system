@@ -1895,11 +1895,9 @@ function AppFooter() {
   const schoolName = (data?.schoolSettings?.school_name || defaultSchool.school_name || 'School Management System').trim();
   const year = new Date().getFullYear();
   return (
-    <footer className="system-footer px-4 md:px-6 py-6 text-center text-xs md:text-sm">
-      <div className="mx-auto max-w-4xl rounded-2xl border border-white/10 px-4 py-4" style={{ background: 'color-mix(in srgb, var(--theme-footer-bg) 88%, white 12%)' }}>
-        <div className="font-semibold tracking-wide">© {year} {schoolName}. All rights reserved.</div>
-        <div className="system-footer-subtle mt-1">Powered school wide footer theme is active across the system.</div>
-        <div className="mt-3 inline-flex items-center gap-2 rounded-full px-3 py-1 text-[11px] font-bold" style={{ background: 'color-mix(in srgb, var(--theme-footer-accent) 24%, transparent)', color: 'var(--theme-footer-text)' }}><span className="w-2.5 h-2.5 rounded-full" style={{ background: 'var(--theme-footer-accent)' }}></span>Footer theme applied across the system</div>
+    <footer className="system-footer px-3 md:px-5 py-3 text-center text-xs md:text-sm">
+      <div className="mx-auto max-w-4xl rounded-2xl border border-white/10 px-4 py-3" style={{ background: 'color-mix(in srgb, var(--theme-footer-bg) 88%, white 12%)' }}>
+        <div className="font-semibold tracking-wide leading-snug">© {year} {schoolName}. All rights reserved.</div>
       </div>
     </footer>
   );
