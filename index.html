@@ -540,7 +540,7 @@ function loadImageElement(src='') {
     img.src = src;
   });
 }
-async function buildZoomedImageFile(sourceDataUrl='', { zoom=1, outputWidth=1600, outputHeight=900, filename='edited-image.png' } = {}) {
+async function buildZoomedImageFile(sourceDataUrl='', { zoom=1, offsetX=0, offsetY=0, outputWidth=1600, outputHeight=900, filename='edited-image.png' } = {}) {
   const img = await loadImageElement(sourceDataUrl);
   const canvas = document.createElement('canvas');
   canvas.width = outputWidth;
@@ -548,12 +548,12 @@ async function buildZoomedImageFile(sourceDataUrl='', { zoom=1, outputWidth=1600
   const ctx = canvas.getContext('2d');
   ctx.clearRect(0, 0, outputWidth, outputHeight);
   const baseScale = Math.max(outputWidth / img.width, outputHeight / img.height);
-  const finalScale = baseScale * Math.max(1, Number(zoom || 1));
+  const finalScale = baseScale * Math.max(0.3, Number(zoom || 1));
   const drawWidth = img.width * finalScale;
   const drawHeight = img.height * finalScale;
-  const offsetX = (outputWidth - drawWidth) / 2;
-  const offsetY = (outputHeight - drawHeight) / 2;
-  ctx.drawImage(img, offsetX, offsetY, drawWidth, drawHeight);
+  const drawX = ((outputWidth - drawWidth) / 2) + Number(offsetX || 0);
+  const drawY = ((outputHeight - drawHeight) / 2) + Number(offsetY || 0);
+  ctx.drawImage(img, drawX, drawY, drawWidth, drawHeight);
   const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png', 0.95));
   if (!blob) throw new Error('Failed to prepare edited image.');
   return new File([blob], filename, { type: 'image/png' });
@@ -1795,7 +1795,7 @@ function usePersistentSchoolData() {
   const notify = React.useCallback((type, message) => {
     const id = uid();
     setNotifications(prev => [...prev, { id, type, message }]);
-    window.setTimeout(() => setNotifications(prev => prev.filter(item => item.id !== id)), 1200);
+    window.setTimeout(() => setNotifications(prev => prev.filter(item => item.id !== id)), 900);
   }, []);
   const notifyOnce = React.useCallback((key, type, message) => {
     if (lastNoticeRef.current === key) return;
@@ -2000,7 +2000,7 @@ function usePersistentSchoolData() {
       if (!queue.length) return;
       setOfflineState(prev => ({ ...prev, isOnline: true, pendingCount: queue.length }));
       await flushPendingChanges();
-    }, 1200);
+    }, 700);
     return () => window.clearInterval(intervalId);
   }, [loaded, flushPendingChanges]);
 
@@ -2126,24 +2126,53 @@ function SectionHeader({ title, subtitle, actions }) { return <div className="fl
 function ImageInput({ label, value, onChange, storageFolder='general' }) { const { notify } = React.useContext(DataContext); const [uploading, setUploading] = React.useState(false); return <div><label className="block text-sm font-semibold mb-2">{label}</label><div className="flex items-center gap-4">{value ? <img src={value} alt="" className="w-16 h-16 rounded-full object-cover border" /> : <div className="w-16 h-16 rounded-full bg-slate-100 flex items-center justify-center border"><i className="fas fa-image text-slate-400"></i></div>}<div className="space-y-2"><input type="file" accept="image/*" disabled={uploading} onChange={async e => { const file = e.target.files?.[0]; if (!file) return; setUploading(true); try { const url = await uploadImageToStorage(file, storageFolder || label); onChange(url); notify('success', 'Image uploaded successfully.'); } catch (error) { console.error('Image upload failed', error); try { const fallback = await fileToDataUrl(file); onChange(fallback); notify('info', 'Storage upload failed, so a local image version was used.'); } catch (_) { notify('error', error?.message || 'Image upload failed.'); } } finally { setUploading(false); } }} /><div className="text-xs text-slate-400">{uploading ? 'Uploading image...' : 'PNG or JPG, up to 2MB.'}</div></div></div></div>; }
 function LoginBackgroundEditorInput({ label, value, onChange, storageFolder='login-background' }) {
   const { notify } = React.useContext(DataContext);
+  const previewRef = React.useRef(null);
+  const dragStateRef = React.useRef({ active: false, startX: 0, startY: 0, startOffsetX: 0, startOffsetY: 0 });
   const [editorOpen, setEditorOpen] = React.useState(false);
   const [sourceDataUrl, setSourceDataUrl] = React.useState('');
   const [zoom, setZoom] = React.useState(1);
+  const [offset, setOffset] = React.useState({ x: 0, y: 0 });
   const [processing, setProcessing] = React.useState(false);
+
+  const clampOffset = React.useCallback((nextOffset, nextZoom=zoom) => {
+    const box = previewRef.current;
+    if (!box) return { x: Number(nextOffset?.x || 0), y: Number(nextOffset?.y || 0) };
+    const width = box.clientWidth || 0;
+    const height = box.clientHeight || 0;
+    const scaledWidth = width * Number(nextZoom || 1);
+    const scaledHeight = height * Number(nextZoom || 1);
+    const maxX = Math.max(0, (scaledWidth - width) / 2);
+    const maxY = Math.max(0, (scaledHeight - height) / 2);
+    return {
+      x: Math.max(-maxX, Math.min(maxX, Number(nextOffset?.x || 0))),
+      y: Math.max(-maxY, Math.min(maxY, Number(nextOffset?.y || 0)))
+    };
+  }, [zoom]);
+
+  const resetEditorState = React.useCallback(() => {
+    setZoom(1);
+    setOffset({ x: 0, y: 0 });
+  }, []);
 
   const openEditorWithFile = async (file) => {
     validateImageFile(file);
     const src = await fileToDataUrl(file);
     setSourceDataUrl(src);
-    setZoom(1);
+    resetEditorState();
     setEditorOpen(true);
   };
+
+  const updateZoom = React.useCallback((nextZoomValue) => {
+    const safeZoom = Math.max(0.3, Math.min(3, Number(nextZoomValue || 1)));
+    setZoom(safeZoom);
+    setOffset(prev => clampOffset(prev, safeZoom));
+  }, [clampOffset]);
 
   const applyEditedImage = async () => {
     if (!sourceDataUrl) return;
     setProcessing(true);
     try {
-      const editedFile = await buildZoomedImageFile(sourceDataUrl, { zoom, outputWidth: 1600, outputHeight: 900, filename: 'login-background-edited.png' });
+      const editedFile = await buildZoomedImageFile(sourceDataUrl, { zoom, offsetX: offset.x, offsetY: offset.y, outputWidth: 1600, outputHeight: 900, filename: 'login-background-edited.png' });
       try {
         const uploadedUrl = await uploadImageToStorage(editedFile, storageFolder || label);
         onChange(uploadedUrl);
@@ -2163,6 +2192,31 @@ function LoginBackgroundEditorInput({ label, value, onChange, storageFolder='log
     }
   };
 
+  const handlePointerDown = (event) => {
+    if (!sourceDataUrl) return;
+    dragStateRef.current = {
+      active: true,
+      startX: event.clientX,
+      startY: event.clientY,
+      startOffsetX: offset.x,
+      startOffsetY: offset.y
+    };
+    try { event.currentTarget.setPointerCapture(event.pointerId); } catch (e) {}
+  };
+
+  const handlePointerMove = (event) => {
+    if (!dragStateRef.current.active) return;
+    const deltaX = event.clientX - dragStateRef.current.startX;
+    const deltaY = event.clientY - dragStateRef.current.startY;
+    setOffset(clampOffset({ x: dragStateRef.current.startOffsetX + deltaX, y: dragStateRef.current.startOffsetY + deltaY }));
+  };
+
+  const stopDragging = (event) => {
+    if (!dragStateRef.current.active) return;
+    dragStateRef.current.active = false;
+    try { if (event?.currentTarget?.releasePointerCapture) event.currentTarget.releasePointerCapture(event.pointerId); } catch (e) {}
+  };
+
   return <div>
     <label className="block text-sm font-semibold mb-2">{label}</label>
     <div className="space-y-3">
@@ -2170,37 +2224,46 @@ function LoginBackgroundEditorInput({ label, value, onChange, storageFolder='log
         {value ? <img src={value} alt="Login background preview" className="w-24 h-16 rounded-xl object-cover border" /> : <div className="w-24 h-16 rounded-xl bg-slate-100 flex items-center justify-center border"><i className="fas fa-image text-slate-400"></i></div>}
         <div className="space-y-2">
           <input type="file" accept="image/*" disabled={processing} onChange={async e => { const file = e.target.files?.[0]; if (!file) return; try { await openEditorWithFile(file); } catch (error) { notify('error', error?.message || 'Image upload failed.'); } finally { e.target.value = ''; } }} />
-          <div className="text-xs text-slate-400">Upload first, then zoom in or zoom out before saving the background image.</div>
+          <div className="text-xs text-slate-400">Upload first, then zoom out, zoom in, and drag the image into position before saving the background image.</div>
         </div>
       </div>
-      <Modal open={editorOpen} title="Edit Login Background Image" onClose={() => !processing && setEditorOpen(false)} max="max-w-4xl">
+      <Modal open={editorOpen} title="Edit Login Background Image" onClose={() => !processing && setEditorOpen(false)} max="max-w-5xl">
         <div className="space-y-5">
           <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-            <div className="text-sm font-semibold text-slate-700 mb-3">Zoom Control Panel</div>
+            <div className="text-sm font-semibold text-slate-700 mb-3">Zoom and Position Control Panel</div>
             <div className="flex flex-wrap items-center gap-3">
-              <button type="button" className="btn btn-outline" onClick={() => setZoom(prev => Math.max(1, Number((prev - 0.1).toFixed(2))))} disabled={processing || zoom <= 1}>
+              <button type="button" className="btn btn-outline" onClick={() => updateZoom(Number((zoom - 0.1).toFixed(2)))} disabled={processing || zoom <= 0.3}>
                 <i className="fas fa-magnifying-glass-minus mr-2"></i>Zoom Out
               </button>
-              <input type="range" min="1" max="2.5" step="0.05" value={zoom} onChange={e => setZoom(Number(e.target.value || 1))} disabled={processing} className="flex-1 min-w-[220px]" />
-              <button type="button" className="btn btn-outline" onClick={() => setZoom(prev => Math.min(2.5, Number((prev + 0.1).toFixed(2))))} disabled={processing || zoom >= 2.5}>
+              <input type="range" min="0.3" max="3" step="0.05" value={zoom} onChange={e => updateZoom(e.target.value)} disabled={processing} className="flex-1 min-w-[220px]" />
+              <button type="button" className="btn btn-outline" onClick={() => updateZoom(Number((zoom + 0.1).toFixed(2)))} disabled={processing || zoom >= 3}>
                 <i className="fas fa-magnifying-glass-plus mr-2"></i>Zoom In
               </button>
-              <div className="rounded-xl bg-white border border-slate-200 px-3 py-2 text-sm font-bold text-slate-700">{Math.round(zoom * 100)}%</div>
+              <div className="rounded-xl bg-white border border-slate-200 px-3 py-2 text-sm font-bold text-slate-700 min-w-[78px] text-center">{Math.round(zoom * 100)}%</div>
+              <button type="button" className="btn btn-outline" onClick={resetEditorState} disabled={processing}>
+                <i className="fas fa-rotate-left mr-2"></i>Reset
+              </button>
             </div>
+            <div className="mt-3 text-xs text-slate-500">Tip: drag the preview to move the background image left, right, up, or down before saving.</div>
           </div>
 
           <div className="rounded-2xl border border-slate-200 overflow-hidden bg-slate-950">
-            <div className="aspect-[16/9] w-full relative overflow-hidden">
-              {sourceDataUrl ? <img src={sourceDataUrl} alt="Editable login background" className="absolute inset-0 w-full h-full object-cover transition-transform duration-150" style={{ transform: `scale(${zoom})`, transformOrigin: 'center center' }} /> : null}
+            <div ref={previewRef} className="aspect-[16/9] w-full relative overflow-hidden touch-none select-none cursor-grab active:cursor-grabbing" onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={stopDragging} onPointerCancel={stopDragging} onPointerLeave={stopDragging}>
+              {sourceDataUrl ? <img src={sourceDataUrl} alt="Editable login background" draggable="false" className="absolute inset-0 w-full h-full object-cover transition-transform duration-75" style={{ transform: `translate(${offset.x}px, ${offset.y}px) scale(${zoom})`, transformOrigin: 'center center' }} /> : null}
               <div className="absolute inset-x-0 top-0 p-4 text-white flex items-center justify-between text-xs font-bold tracking-[0.2em] uppercase">
                 <span className="rounded-full bg-black/35 px-3 py-1 backdrop-blur">Live Preview</span>
-                <span className="rounded-full bg-black/35 px-3 py-1 backdrop-blur">Login Screen</span>
+                <span className="rounded-full bg-black/35 px-3 py-1 backdrop-blur">Drag To Position</span>
               </div>
               <div className="absolute inset-x-0 bottom-0 p-5 text-white bg-gradient-to-t from-black/55 to-transparent">
                 <div className="text-xl font-extrabold leading-tight">{(value || sourceDataUrl) ? 'Background preview ready' : 'Login page background preview'}</div>
                 <div className="text-sm text-white/90">Adjust the image until it fits the login screen the way you want before saving.</div>
               </div>
             </div>
+          </div>
+
+          <div className="grid md:grid-cols-2 gap-3 text-sm">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3"><span className="font-semibold text-slate-700">Horizontal Position:</span> <span className="font-bold text-slate-900 ml-2">{Math.round(offset.x)}px</span></div>
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3"><span className="font-semibold text-slate-700">Vertical Position:</span> <span className="font-bold text-slate-900 ml-2">{Math.round(offset.y)}px</span></div>
           </div>
 
           <div className="flex justify-end gap-2">
@@ -3381,7 +3444,7 @@ function TeacherSalaryStructure({ officer }) {
     <Modal open={gradeOpen} onClose={() => setGradeOpen(false)} title={gradeForm.id ? 'Edit Salary Grade' : 'Add Salary Grade'}>
       <form onSubmit={saveGrade} className="space-y-4">
         <div className="grid md:grid-cols-2 gap-4">
-          <Field label="Grade ID"><select className="select" required value={gradeForm.grade_id || ''} onChange={e => setGradeForm({ ...gradeForm, grade_id: e.target.value })}><option value="">Select grade</option><option value="UP">UP</option><option value="LP">LP</option></select></Field>
+          <Field label="Grade ID"><><input className="input" list="salary-grade-id-suggestions" required value={gradeForm.grade_id || ''} onChange={e => setGradeForm({ ...gradeForm, grade_id: e.target.value.toUpperCase() })} placeholder="Enter custom Grade ID" /><datalist id="salary-grade-id-suggestions">{Array.from(new Set(safeArray(data.salaryGrades).map(item => String(item.grade_id || '').trim()).filter(Boolean))).sort().map(item => <option key={item} value={item} />)}</datalist></></Field>
           <Field label="Basic Pay (GHS)"><input type="number" min="0" step="0.01" className="input" required value={gradeForm.basic_pay} onChange={e => setGradeForm({ ...gradeForm, basic_pay: e.target.value })} /></Field>
           <Field label="House Allowance (GHS)"><input type="number" min="0" step="0.01" className="input" value={gradeForm.house_allowance} onChange={e => setGradeForm({ ...gradeForm, house_allowance: e.target.value })} /></Field>
           <Field label="Transport Allowance (GHS)"><input type="number" min="0" step="0.01" className="input" value={gradeForm.transport_allowance} onChange={e => setGradeForm({ ...gradeForm, transport_allowance: e.target.value })} /></Field>
