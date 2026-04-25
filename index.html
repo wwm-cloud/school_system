@@ -1369,6 +1369,129 @@ const EMPTY_LIVE_DATA = {
 function toYesNo(value) { return value ? 'Yes' : 'No'; }
 function fromYesNo(value) { return value === 'Yes'; }
 function dbId(value) { return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || '')) ? value : undefined; }
+
+async function resolveSalaryGradeBackendId(item, salaryGrades=[]) {
+  const direct = dbId(item?.salary_grade_id || item?.id);
+  if (direct) return direct;
+  const currentGrade = safeArray(salaryGrades).find(grade => grade.id === item?.salary_grade_id || grade.id === item?.id || String(grade.grade_id || '').trim() === String(item?.grade_id || '').trim());
+  const gradeCode = String(currentGrade?.grade_id || item?.grade_id || '').trim();
+  if (!gradeCode || !supabase) return undefined;
+  const { data: existing, error } = await supabase.from('salary_grades').select('id, grade_id').eq('grade_id', gradeCode).maybeSingle();
+  if (error) throw error;
+  return existing?.id || undefined;
+}
+async function resolveTeacherBackendId(teacherId, teachers=[]) {
+  const direct = dbId(teacherId);
+  if (direct) return direct;
+  const teacher = safeArray(teachers).find(item => item.id === teacherId);
+  const staffNumber = String(teacher?.staff_number || '').trim();
+  if (!staffNumber || !supabase) return undefined;
+  const { data: existing, error } = await supabase.from('teachers').select('id, staff_number').eq('staff_number', staffNumber).maybeSingle();
+  if (error) throw error;
+  return existing?.id || undefined;
+}
+async function syncSalaryGrades(prevItems, nextItems) {
+  const nextMap = new Map((nextItems || []).map(item => [item.id, item]));
+  for (const prev of prevItems || []) {
+    if (!nextMap.has(prev.id)) {
+      const backendId = await resolveSalaryGradeBackendId(prev, prevItems);
+      if (backendId) {
+        const { error } = await supabase.from('salary_grades').delete().eq('id', backendId);
+        if (error) throw error;
+      }
+    }
+  }
+  for (const item of nextItems || []) {
+    const backendId = await resolveSalaryGradeBackendId(item, nextItems);
+    const row = {
+      id: backendId,
+      grade_id: String(item.grade_id || '').trim(),
+      basic_pay: Number(item.basic_pay || 0),
+      house_allowance: Number(item.house_allowance || 0),
+      transport_allowance: Number(item.transport_allowance || 0),
+      position_allowance: Number(item.position_allowance || 0)
+    };
+    const { error } = await supabase.from('salary_grades').upsert(row, { onConflict: 'grade_id' });
+    if (error) throw error;
+  }
+}
+async function syncTeacherPayrollDetails(prevItems, nextItems, teachers, salaryGrades) {
+  const nextMap = new Map((nextItems || []).map(item => [item.id, item]));
+  for (const prev of prevItems || []) {
+    if (!nextMap.has(prev.id) && dbId(prev.id)) {
+      const { error } = await supabase.from('teacher_payroll_details').delete().eq('id', prev.id);
+      if (error) throw error;
+    }
+  }
+  for (const item of nextItems || []) {
+    const teacherId = await resolveTeacherBackendId(item.teacher_id, teachers);
+    const salaryGradeId = await resolveSalaryGradeBackendId(item, salaryGrades);
+    if (!teacherId) throw new Error('Selected teacher record is not fully synchronized yet. Refresh once, then save payroll details again.');
+    if (!salaryGradeId) throw new Error('Selected salary grade record is not fully synchronized yet. Refresh once, then save payroll details again.');
+    const row = {
+      id: dbId(item.id),
+      teacher_id: teacherId,
+      salary_grade_id: salaryGradeId,
+      payroll_number: item.payroll_number || null,
+      tax_number: item.tax_number || null,
+      ssnit_number: item.ssnit_number || null,
+      loan_balance: Number(item.loan_balance || 0),
+      effective_from: item.effective_from || null,
+      notes: item.notes || null,
+      account_status: item.account_status || 'Active'
+    };
+    const { error } = await supabase.from('teacher_payroll_details').upsert(row, { onConflict: 'teacher_id' });
+    if (error) throw error;
+  }
+}
+async function syncMonthlySalaryPayments(prevItems, nextItems, teachers, salaryGrades, payrollRows) {
+  const nextMap = new Map((nextItems || []).map(item => [item.id, item]));
+  for (const prev of prevItems || []) {
+    if (!nextMap.has(prev.id) && dbId(prev.id)) {
+      const { error } = await supabase.from('monthly_salary_payments').delete().eq('id', prev.id);
+      if (error) throw error;
+    }
+  }
+  for (const item of nextItems || []) {
+    const teacherId = await resolveTeacherBackendId(item.teacher_id, teachers);
+    const salaryGradeId = await resolveSalaryGradeBackendId(item, salaryGrades);
+    const localPayroll = safeArray(payrollRows).find(row => row.id === item.payroll_detail_id) || safeArray(payrollRows).find(row => row.teacher_id === item.teacher_id);
+    let payrollDetailId = dbId(item.payroll_detail_id);
+    if (!payrollDetailId && localPayroll) {
+      const teacherBackendId = await resolveTeacherBackendId(localPayroll.teacher_id, teachers);
+      if (teacherBackendId) {
+        const { data: existingPayroll, error: payrollError } = await supabase.from('teacher_payroll_details').select('id').eq('teacher_id', teacherBackendId).maybeSingle();
+        if (payrollError) throw payrollError;
+        payrollDetailId = existingPayroll?.id || undefined;
+      }
+    }
+    if (!teacherId) throw new Error('Selected teacher record is not fully synchronized yet. Refresh once, then save monthly payment again.');
+    if (!salaryGradeId) throw new Error('Selected salary grade record is not fully synchronized yet. Refresh once, then save monthly payment again.');
+    if (!payrollDetailId) throw new Error('Teacher payroll details must be saved successfully before monthly payment can be recorded.');
+    const row = {
+      id: dbId(item.id),
+      teacher_id: teacherId,
+      payroll_detail_id: payrollDetailId,
+      salary_grade_id: salaryGradeId,
+      payment_month: item.payment_month,
+      payment_year: String(item.payment_year || ''),
+      basic_pay: Number(item.basic_pay || 0),
+      house_allowance: Number(item.house_allowance || 0),
+      transport_allowance: Number(item.transport_allowance || 0),
+      position_allowance: Number(item.position_allowance || 0),
+      tax_deduction: Number(item.tax_deduction || 0),
+      ssnit_deduction: Number((item.ssnit_deduction ?? item.pension_deduction) || 0),
+      loan_deduction: Number(item.loan_deduction || 0),
+      other_deduction: Number(item.other_deduction || 0),
+      paid_date: item.paid_date || null,
+      payment_method: item.payment_method || null,
+      payment_status: item.payment_status || 'Paid',
+      notes: item.notes || null
+    };
+    const { error } = await supabase.from('monthly_salary_payments').upsert(row);
+    if (error) throw error;
+  }
+}
 const APP_SESSION_KEY = 'school_app_user_session_v1';
 async function ensureSupabaseBrowserSession() {
   if (!supabase?.auth) return null;
@@ -1708,9 +1831,9 @@ function usePersistentSchoolData() {
       }
     }
     else if (key === 'archiveRecords') await syncSimpleTable('archive_records', prevItems, nextItems, item => ({ id: dbId(item.id), student_id: item.student_id || null, student_name: item.student_name || null, student_number: item.student_number || null, academic_year: item.academic_year || null, previous_class_id: item.previous_class_id || null, promoted_class_id: item.promoted_class_id || null, archived_at: item.archived_at || new Date().toISOString(), status: item.status || 'Archived', student_snapshot: clonePlain(item.student_snapshot || {}), grades: clonePlain(safeArray(item.grades)), attendance: clonePlain(safeArray(item.attendance)), fees: clonePlain(safeArray(item.fees)) }));
-    else if (key === 'salaryGrades') await syncSimpleTable('salary_grades', prevItems, nextItems, item => ({ id: dbId(item.id), grade_id: item.grade_id, basic_pay: Number(item.basic_pay || 0), house_allowance: Number(item.house_allowance || 0), transport_allowance: Number(item.transport_allowance || 0), position_allowance: Number(item.position_allowance || 0) }));
-    else if (key === 'teacherPayroll') await syncSimpleTable('teacher_payroll_details', prevItems, nextItems, item => ({ id: dbId(item.id), teacher_id: item.teacher_id, salary_grade_id: item.salary_grade_id, payroll_number: item.payroll_number || null, tax_number: item.tax_number || null, ssnit_number: item.ssnit_number || null, loan_balance: Number(item.loan_balance || 0), effective_from: item.effective_from || null, notes: item.notes || null, account_status: item.account_status || 'Active' }));
-    else if (key === 'monthlySalaryPayments') await syncSimpleTable('monthly_salary_payments', prevItems, nextItems, item => ({ id: dbId(item.id), teacher_id: item.teacher_id, payroll_detail_id: item.payroll_detail_id || null, salary_grade_id: item.salary_grade_id || null, payment_month: item.payment_month, payment_year: String(item.payment_year || ''), basic_pay: Number(item.basic_pay || 0), house_allowance: Number(item.house_allowance || 0), transport_allowance: Number(item.transport_allowance || 0), position_allowance: Number(item.position_allowance || 0), tax_deduction: Number(item.tax_deduction || 0), ssnit_deduction: Number((item.ssnit_deduction ?? item.pension_deduction) || 0), loan_deduction: Number(item.loan_deduction || 0), other_deduction: Number(item.other_deduction || 0), paid_date: item.paid_date || null, payment_method: item.payment_method || null, payment_status: item.payment_status || 'Paid', notes: item.notes || null }));
+    else if (key === 'salaryGrades') await syncSalaryGrades(prevItems, nextItems);
+    else if (key === 'teacherPayroll') await syncTeacherPayrollDetails(prevItems, nextItems, data.teachers, data.salaryGrades);
+    else if (key === 'monthlySalaryPayments') await syncMonthlySalaryPayments(prevItems, nextItems, data.teachers, data.salaryGrades, data.teacherPayroll);
     else if (key === 'credentials') {
       const filteredPrev = safeArray(prevItems);
       const filteredNext = safeArray(nextItems);
@@ -3081,9 +3204,10 @@ function TeacherSalaryStructure({ officer }) {
     };
     if (!payload.grade_id) throw new Error('Salary grade ID is required.');
     const duplicate = safeArray(data.salaryGrades).find(item => item.id !== payload.id && String(item.grade_id || '').trim().toLowerCase() === payload.grade_id.toLowerCase());
-    if (duplicate) { notify('error', 'That salary grade ID already exists.'); return; }
-    await updateCollection('salaryGrades', items => items.some(item => item.id === payload.id) ? items.map(item => item.id === payload.id ? payload : item) : [payload, ...items]);
-    notify('success', 'Salary grade saved successfully.');
+    const targetId = payload.id || duplicate?.id || uid();
+    const nextPayload = { ...payload, id: targetId };
+    await updateCollection('salaryGrades', items => items.some(item => item.id === targetId) ? items.map(item => item.id === targetId ? { ...item, ...nextPayload } : item) : [nextPayload, ...items]);
+    notify('success', duplicate && !payload.id ? 'Existing salary grade updated successfully.' : 'Salary grade saved successfully.');
     setGradeOpen(false);
     setGradeForm(emptySalaryGrade);
   };
