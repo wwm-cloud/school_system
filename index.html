@@ -277,6 +277,41 @@ function normalizeCrossModuleConsistency(raw={}) {
   const termFeeSettings = safeArray(raw.termFeeSettings)
     .filter(item => !item.class_id || classIds.has(item.class_id))
     .map(item => ({ ...item, academic_year: String(item.academic_year || ''), amount: Number(item.amount || 0) }));
+  const salaryGrades = safeArray(raw.salaryGrades).map(item => ({
+    ...item,
+    grade_id: String(item.grade_id || '').trim(),
+    basic_pay: Number(item.basic_pay || 0),
+    house_allowance: Number(item.house_allowance || 0),
+    transport_allowance: Number(item.transport_allowance || 0),
+    position_allowance: Number(item.position_allowance || 0)
+  })).filter(item => item.grade_id);
+  const teacherPayroll = safeArray(raw.teacherPayroll).filter(item => teacherIds.has(item.teacher_id)).map(item => ({
+    ...item,
+    salary_grade_id: item.salary_grade_id || '',
+    payroll_number: String(item.payroll_number || '').trim(),
+    tax_number: String(item.tax_number || '').trim(),
+    ssnit_number: String((item.ssnit_number ?? item.pension_number) || '').trim(),
+    loan_balance: Number(item.loan_balance || 0),
+    effective_from: item.effective_from || today(),
+    account_status: item.account_status || 'Active'
+  }));
+  const teacherPayrollIds = new Set(teacherPayroll.map(item => item.id));
+  const monthlySalaryPayments = safeArray(raw.monthlySalaryPayments)
+    .filter(item => teacherIds.has(item.teacher_id) && (!item.payroll_detail_id || teacherPayrollIds.has(item.payroll_detail_id)))
+    .map(item => ({
+      ...item,
+      basic_pay: Number(item.basic_pay || 0),
+      house_allowance: Number(item.house_allowance || 0),
+      transport_allowance: Number(item.transport_allowance || 0),
+      position_allowance: Number(item.position_allowance || 0),
+      tax_deduction: Number(item.tax_deduction || 0),
+      ssnit_deduction: Number((item.ssnit_deduction ?? item.pension_deduction) || 0),
+      loan_deduction: Number(item.loan_deduction || 0),
+      other_deduction: Number(item.other_deduction || 0),
+      payment_year: String(item.payment_year || ''),
+      payment_status: item.payment_status || 'Paid',
+      paid_date: item.paid_date || ''
+    }));
   return {
     ...raw,
     schoolSettings: {
@@ -299,9 +334,37 @@ function normalizeCrossModuleConsistency(raw={}) {
     grades,
     fees,
     termFeeSettings,
-    archiveRecords
+    archiveRecords,
+    salaryGrades,
+    teacherPayroll,
+    monthlySalaryPayments
   };
 }
+
+function salaryGradeGross(grade={}) {
+  return Number(grade.basic_pay || 0) + Number(grade.house_allowance || 0) + Number(grade.transport_allowance || 0) + Number(grade.position_allowance || 0);
+}
+function salaryPaymentGross(payment={}) {
+  return Number(payment.basic_pay || 0) + Number(payment.house_allowance || 0) + Number(payment.transport_allowance || 0) + Number(payment.position_allowance || 0);
+}
+function salaryPaymentTotalDeductions(payment={}) {
+  return Number(payment.tax_deduction || 0) + Number(payment.ssnit_deduction || 0) + Number(payment.loan_deduction || 0) + Number(payment.other_deduction || 0);
+}
+function salaryPaymentNet(payment={}) {
+  return Math.max(0, salaryPaymentGross(payment) - salaryPaymentTotalDeductions(payment));
+}
+function getTeacherPayrollBundle(data, teacherId='') {
+  const teacher = safeArray(data?.teachers).find(item => item.id === teacherId) || null;
+  const payroll = safeArray(data?.teacherPayroll).find(item => item.teacher_id === teacherId) || null;
+  const grade = payroll ? safeArray(data?.salaryGrades).find(item => item.id === payroll.salary_grade_id) || null : null;
+  const payments = safeArray(data?.monthlySalaryPayments)
+    .filter(item => item.teacher_id === teacherId)
+    .sort((a, b) => Number(b.payment_year || 0) - Number(a.payment_year || 0) || String(b.payment_month || '').localeCompare(String(a.payment_month || '')) || new Date(b.paid_date || 0) - new Date(a.paid_date || 0));
+  const totalNetPaid = payments.reduce((sum, item) => sum + salaryPaymentNet(item), 0);
+  const totalDeductions = payments.reduce((sum, item) => sum + salaryPaymentTotalDeductions(item), 0);
+  return { teacher, payroll, grade, payments, totalNetPaid, totalDeductions, paymentCount: payments.length };
+}
+
 function parseClassRank(cls) {
   const label = fullClassName(cls).toLowerCase();
   const num = parseInt((label.match(/\d+/) || [0])[0], 10) || 0;
@@ -468,6 +531,32 @@ function validateImageFile(file) {
   if (!file) throw new Error('No file selected.');
   if (!String(file.type || '').startsWith('image/')) throw new Error('Only image files are allowed.');
   if (file.size > 2 * 1024 * 1024) throw new Error('Image must be 2MB or less.');
+}
+function loadImageElement(src='') {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('Failed to load image for editing.'));
+    img.src = src;
+  });
+}
+async function buildZoomedImageFile(sourceDataUrl='', { zoom=1, outputWidth=1600, outputHeight=900, filename='edited-image.png' } = {}) {
+  const img = await loadImageElement(sourceDataUrl);
+  const canvas = document.createElement('canvas');
+  canvas.width = outputWidth;
+  canvas.height = outputHeight;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, outputWidth, outputHeight);
+  const baseScale = Math.max(outputWidth / img.width, outputHeight / img.height);
+  const finalScale = baseScale * Math.max(1, Number(zoom || 1));
+  const drawWidth = img.width * finalScale;
+  const drawHeight = img.height * finalScale;
+  const offsetX = (outputWidth - drawWidth) / 2;
+  const offsetY = (outputHeight - drawHeight) / 2;
+  ctx.drawImage(img, offsetX, offsetY, drawWidth, drawHeight);
+  const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png', 0.95));
+  if (!blob) throw new Error('Failed to prepare edited image.');
+  return new File([blob], filename, { type: 'image/png' });
 }
 async function uploadImageToStorage(file, folder='general') {
   validateImageFile(file);
@@ -1046,6 +1135,9 @@ const emptySubject = { id: '', name: '', code: '' };
 const emptyStudent = { id: '', full_name: '', class_id: '', student_section: '', gender: 'Male', dob: '', parent_full_name: '', parent_phone_contact: '', relationship: 'Parent', photo_url: '', student_number: '', account_active: true };
 const emptyParentSelection = { parent_id: '', account_status: 'Active' };
 const emptyFee = { id: '', class_id: '', student_id: '', academic_year: new Date().getFullYear().toString(), term: 'Term 1', amount_due: '', amount_paid: '', credit_used: '', payment_method: 'Cash', notes: '', recorded_at: '', updated_at: '' };
+const emptySalaryGrade = { id: '', grade_id: '', basic_pay: '', house_allowance: '', transport_allowance: '', position_allowance: '' };
+const emptyTeacherPayroll = { id: '', teacher_id: '', salary_grade_id: '', payroll_number: '', tax_number: '', ssnit_number: '', loan_balance: '', effective_from: today(), notes: '', account_status: 'Active' };
+const emptyMonthlySalaryPayment = { id: '', teacher_id: '', payroll_detail_id: '', salary_grade_id: '', payment_month: new Date().toLocaleString('en-GB', { month: 'long' }), payment_year: new Date().getFullYear().toString(), basic_pay: '', house_allowance: '', transport_allowance: '', position_allowance: '', tax_deduction: '', ssnit_deduction: '', loan_deduction: '', other_deduction: '', paid_date: today(), payment_method: 'Bank Transfer', payment_status: 'Paid', notes: '' };
 const emptyTermFeeSetting = { id: '', class_id: '', academic_year: new Date().getFullYear().toString(), term: 'Term 1', amount: '', notes: '' };
 const emptyAttendance = { id: '', class_id: '', student_id: '', status: 'Present', remarks: '', date: today() };
 const emptyGrade = { id: '', class_id: '', student_id: '', subject_id: '', term: 'Term 1', academic_year: new Date().getFullYear().toString(), mid_exam_30: '', end_exam_70: '', is_published: false, published_at: null };
@@ -1110,6 +1202,9 @@ function seedData() {
   ];
   const grade = { id: 'g1', class_id: 'cls1', student_id: 'stu1', teacher_id: 't1', subject_id: 'sub1', term: 'Term 1', academic_year: '2026', mid_exam_30: 30, end_exam_70: 42, teacher_initial: 'KM', is_published: true, locked: false, ...calcStoredGradeRecord({ mid_exam_30: 30, end_exam_70: 42 }), position: 1 };
   const fee = { id: 'f1', student_id: 'stu1', class_id: 'cls1', academic_year: '2026', term: 'Term 1', amount_due: 500, amount_paid: 300, balance: 200, payment_method: 'Cash', status: 'Partial', recorded_by: 'acc1' };
+  const salaryGrade = { id: 'sg1', grade_id: 'GRADE-A', basic_pay: 2500, house_allowance: 350, transport_allowance: 220, position_allowance: 180 };
+  const teacherPayroll = { id: 'tp1', teacher_id: 't1', salary_grade_id: 'sg1', payroll_number: 'PAY-JOHN-001', tax_number: 'TIN-1001', ssnit_number: 'SSNIT-1001', loan_balance: 500, effective_from: today(), notes: 'Seed payroll record', account_status: 'Active' };
+  const salaryPayment = { id: 'sp1', teacher_id: 't1', payroll_detail_id: 'tp1', salary_grade_id: 'sg1', payment_month: 'January', payment_year: '2026', basic_pay: 2500, house_allowance: 350, transport_allowance: 220, position_allowance: 180, tax_deduction: 120, ssnit_deduction: 80, loan_deduction: 50, other_deduction: 0, paid_date: today(), payment_method: 'Bank Transfer', payment_status: 'Paid', notes: 'January salary paid' };
   const timetable = [
     { id: 'tt1', class_id: 'cls1', day_of_week: 'Monday', period_time: '8:00 AM - 9:00 AM', subject_id: 'sub1', teacher_id: 't1' },
     { id: 'tt2', class_id: 'cls1', day_of_week: 'Tuesday', period_time: '9:00 AM - 10:00 AM', subject_id: 'sub2', teacher_id: 't1' }
@@ -1129,7 +1224,7 @@ function seedData() {
     admin: { online: false, name: 'School Admin' }, teacher: { online: false, name: teacher.full_name }, student: { online: false, name: student1.full_name },
     parent: { online: false, name: parent1.full_name }, accountant: { online: false, name: accountOfficer.full_name }, principal: { online: false, name: principal.full_name }
   };
-  return normalizeCrossModuleConsistency({ schoolSettings: defaultSchool, principals: [principal], teachers: [teacher], students: [student1, student2], parents: [parent1, parent2], accountStaff: [accountOfficer], classes: [classA, classB], subjects: [sub1, sub2], timetable, attendance, grades: [grade], fees: [fee], credentials, chats, presenceRows: [], presence, archiveRecords: [] });
+  return normalizeCrossModuleConsistency({ schoolSettings: defaultSchool, principals: [principal], teachers: [teacher], students: [student1, student2], parents: [parent1, parent2], accountStaff: [accountOfficer], classes: [classA, classB], subjects: [sub1, sub2], timetable, attendance, grades: [grade], fees: [fee], credentials, chats, presenceRows: [], presence, archiveRecords: [], salaryGrades: [salaryGrade], teacherPayroll: [teacherPayroll], monthlySalaryPayments: [salaryPayment] });
 }
 
 const DB_KEY = 'school_management_complete_dataset';
@@ -1260,7 +1355,7 @@ const SessionContext = React.createContext(null);
 
 const EMPTY_LIVE_DATA = {
   schoolSettings: defaultSchool,
-  principals: [], teachers: [], students: [], parents: [], accountStaff: [], classes: [], subjects: [], timetable: [], attendance: [], grades: [], fees: [], termFeeSettings: [], archiveRecords: [], credentials: [], chats: [], presenceRows: [],
+  principals: [], teachers: [], students: [], parents: [], accountStaff: [], classes: [], subjects: [], timetable: [], attendance: [], grades: [], fees: [], termFeeSettings: [], archiveRecords: [], salaryGrades: [], teacherPayroll: [], monthlySalaryPayments: [], credentials: [], chats: [], presenceRows: [],
   presence: {
     admin: { online: false, name: 'School Admin' },
     teacher: { online: false, name: 'Teacher' },
@@ -1314,7 +1409,7 @@ async function fetchOptionalTable(table) {
 async function fetchAllSchoolData() {
   if (!supabase) return seedData();
   await ensureSupabaseBrowserSession();
-  const [schoolSettingsRes, profiles, principalsRaw, accountStaffRaw, teachersRaw, studentsRaw, parentsRaw, parentLinksRaw, classAssignmentsRaw, subjectAssignmentsRaw, classes, subjects, timetableRaw, attendanceRaw, gradesRaw, feesRaw, termFeeSettingsRaw, archiveRecordsRaw, credentialsRawInitial, chatsRaw, presenceRaw] = await Promise.all([
+  const [schoolSettingsRes, profiles, principalsRaw, accountStaffRaw, teachersRaw, studentsRaw, parentsRaw, parentLinksRaw, classAssignmentsRaw, subjectAssignmentsRaw, classes, subjects, timetableRaw, attendanceRaw, gradesRaw, feesRaw, termFeeSettingsRaw, archiveRecordsRaw, salaryGradesRaw, teacherPayrollRaw, monthlySalaryPaymentsRaw, credentialsRawInitial, chatsRaw, presenceRaw] = await Promise.all([
     supabase.from('school_settings').select('*').eq('id', 1).single(),
     fetchTable('profiles'),
     fetchTable('principals'),
@@ -1333,6 +1428,9 @@ async function fetchAllSchoolData() {
     fetchTable('fees'),
     fetchOptionalTable('term_fee_settings'),
     fetchOptionalTable('archive_records'),
+    fetchOptionalTable('salary_grades'),
+    fetchOptionalTable('teacher_payroll_details'),
+    fetchOptionalTable('monthly_salary_payments'),
     fetchTable('user_credentials'),
     fetchTable('chat_messages'),
     fetchTable('presence_status')
@@ -1387,6 +1485,9 @@ async function fetchAllSchoolData() {
       attendance: safeArray(row.attendance),
       fees: safeArray(row.fees)
     })),
+    salaryGrades: (salaryGradesRaw || []),
+    teacherPayroll: (teacherPayrollRaw || []),
+    monthlySalaryPayments: (monthlySalaryPaymentsRaw || []),
     credentials: ensureAdminCredential((credentialsRaw || []).map(row => ({ ...row, force_password_change: toYesNo(row.force_password_change) }))),
     chats: chatsRaw || [],
     presenceRows: presenceRaw || [],
@@ -1607,6 +1708,9 @@ function usePersistentSchoolData() {
       }
     }
     else if (key === 'archiveRecords') await syncSimpleTable('archive_records', prevItems, nextItems, item => ({ id: dbId(item.id), student_id: item.student_id || null, student_name: item.student_name || null, student_number: item.student_number || null, academic_year: item.academic_year || null, previous_class_id: item.previous_class_id || null, promoted_class_id: item.promoted_class_id || null, archived_at: item.archived_at || new Date().toISOString(), status: item.status || 'Archived', student_snapshot: clonePlain(item.student_snapshot || {}), grades: clonePlain(safeArray(item.grades)), attendance: clonePlain(safeArray(item.attendance)), fees: clonePlain(safeArray(item.fees)) }));
+    else if (key === 'salaryGrades') await syncSimpleTable('salary_grades', prevItems, nextItems, item => ({ id: dbId(item.id), grade_id: item.grade_id, basic_pay: Number(item.basic_pay || 0), house_allowance: Number(item.house_allowance || 0), transport_allowance: Number(item.transport_allowance || 0), position_allowance: Number(item.position_allowance || 0) }));
+    else if (key === 'teacherPayroll') await syncSimpleTable('teacher_payroll_details', prevItems, nextItems, item => ({ id: dbId(item.id), teacher_id: item.teacher_id, salary_grade_id: item.salary_grade_id, payroll_number: item.payroll_number || null, tax_number: item.tax_number || null, ssnit_number: item.ssnit_number || null, loan_balance: Number(item.loan_balance || 0), effective_from: item.effective_from || null, notes: item.notes || null, account_status: item.account_status || 'Active' }));
+    else if (key === 'monthlySalaryPayments') await syncSimpleTable('monthly_salary_payments', prevItems, nextItems, item => ({ id: dbId(item.id), teacher_id: item.teacher_id, payroll_detail_id: item.payroll_detail_id || null, salary_grade_id: item.salary_grade_id || null, payment_month: item.payment_month, payment_year: String(item.payment_year || ''), basic_pay: Number(item.basic_pay || 0), house_allowance: Number(item.house_allowance || 0), transport_allowance: Number(item.transport_allowance || 0), position_allowance: Number(item.position_allowance || 0), tax_deduction: Number(item.tax_deduction || 0), ssnit_deduction: Number((item.ssnit_deduction ?? item.pension_deduction) || 0), loan_deduction: Number(item.loan_deduction || 0), other_deduction: Number(item.other_deduction || 0), paid_date: item.paid_date || null, payment_method: item.payment_method || null, payment_status: item.payment_status || 'Paid', notes: item.notes || null }));
     else if (key === 'credentials') {
       const filteredPrev = safeArray(prevItems);
       const filteredNext = safeArray(nextItems);
@@ -1897,6 +2001,96 @@ function Modal({ open, title, onClose, children, max='max-w-4xl' }) { if (!open)
 function StatCard({ label, value, icon, accent='emerald' }) { return <div className="card p-3 md:p-4 mobile-card-tight"><div className="flex items-center gap-3"><div className="w-11 h-11 md:w-12 md:h-12 rounded-2xl bg-slate-50 flex items-center justify-center shrink-0"><i className={`fas fa-${icon} text-${accent}-600 text-base md:text-lg`}></i></div><div className="min-w-0"><p className="text-xs md:text-sm text-slate-500 leading-tight">{label}</p><p className="text-xl md:text-2xl font-extrabold leading-tight mt-1">{value}</p></div></div></div>; }
 function SectionHeader({ title, subtitle, actions }) { return <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4"><div><h2 className="text-xl md:text-2xl font-bold leading-tight">{title}</h2>{subtitle && <p className="text-slate-500 text-sm mt-1 leading-snug">{subtitle}</p>}</div><div className="flex flex-wrap gap-2">{actions}</div></div>; }
 function ImageInput({ label, value, onChange, storageFolder='general' }) { const { notify } = React.useContext(DataContext); const [uploading, setUploading] = React.useState(false); return <div><label className="block text-sm font-semibold mb-2">{label}</label><div className="flex items-center gap-4">{value ? <img src={value} alt="" className="w-16 h-16 rounded-full object-cover border" /> : <div className="w-16 h-16 rounded-full bg-slate-100 flex items-center justify-center border"><i className="fas fa-image text-slate-400"></i></div>}<div className="space-y-2"><input type="file" accept="image/*" disabled={uploading} onChange={async e => { const file = e.target.files?.[0]; if (!file) return; setUploading(true); try { const url = await uploadImageToStorage(file, storageFolder || label); onChange(url); notify('success', 'Image uploaded successfully.'); } catch (error) { console.error('Image upload failed', error); try { const fallback = await fileToDataUrl(file); onChange(fallback); notify('info', 'Storage upload failed, so a local image version was used.'); } catch (_) { notify('error', error?.message || 'Image upload failed.'); } } finally { setUploading(false); } }} /><div className="text-xs text-slate-400">{uploading ? 'Uploading image...' : 'PNG or JPG, up to 2MB.'}</div></div></div></div>; }
+function LoginBackgroundEditorInput({ label, value, onChange, storageFolder='login-background' }) {
+  const { notify } = React.useContext(DataContext);
+  const [editorOpen, setEditorOpen] = React.useState(false);
+  const [sourceDataUrl, setSourceDataUrl] = React.useState('');
+  const [zoom, setZoom] = React.useState(1);
+  const [processing, setProcessing] = React.useState(false);
+
+  const openEditorWithFile = async (file) => {
+    validateImageFile(file);
+    const src = await fileToDataUrl(file);
+    setSourceDataUrl(src);
+    setZoom(1);
+    setEditorOpen(true);
+  };
+
+  const applyEditedImage = async () => {
+    if (!sourceDataUrl) return;
+    setProcessing(true);
+    try {
+      const editedFile = await buildZoomedImageFile(sourceDataUrl, { zoom, outputWidth: 1600, outputHeight: 900, filename: 'login-background-edited.png' });
+      try {
+        const uploadedUrl = await uploadImageToStorage(editedFile, storageFolder || label);
+        onChange(uploadedUrl);
+        notify('success', 'Edited login background image prepared successfully.');
+      } catch (error) {
+        console.error('Edited image upload failed', error);
+        const fallback = await fileToDataUrl(editedFile);
+        onChange(fallback);
+        notify('info', 'Edited image was saved locally because storage upload was unavailable.');
+      }
+      setEditorOpen(false);
+    } catch (error) {
+      console.error('Image editing failed', error);
+      notify('error', error?.message || 'Failed to edit image.');
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  return <div>
+    <label className="block text-sm font-semibold mb-2">{label}</label>
+    <div className="space-y-3">
+      <div className="flex items-center gap-4">
+        {value ? <img src={value} alt="Login background preview" className="w-24 h-16 rounded-xl object-cover border" /> : <div className="w-24 h-16 rounded-xl bg-slate-100 flex items-center justify-center border"><i className="fas fa-image text-slate-400"></i></div>}
+        <div className="space-y-2">
+          <input type="file" accept="image/*" disabled={processing} onChange={async e => { const file = e.target.files?.[0]; if (!file) return; try { await openEditorWithFile(file); } catch (error) { notify('error', error?.message || 'Image upload failed.'); } finally { e.target.value = ''; } }} />
+          <div className="text-xs text-slate-400">Upload first, then zoom in or zoom out before saving the background image.</div>
+        </div>
+      </div>
+      <Modal open={editorOpen} title="Edit Login Background Image" onClose={() => !processing && setEditorOpen(false)} max="max-w-4xl">
+        <div className="space-y-5">
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            <div className="text-sm font-semibold text-slate-700 mb-3">Zoom Control Panel</div>
+            <div className="flex flex-wrap items-center gap-3">
+              <button type="button" className="btn btn-outline" onClick={() => setZoom(prev => Math.max(1, Number((prev - 0.1).toFixed(2))))} disabled={processing || zoom <= 1}>
+                <i className="fas fa-magnifying-glass-minus mr-2"></i>Zoom Out
+              </button>
+              <input type="range" min="1" max="2.5" step="0.05" value={zoom} onChange={e => setZoom(Number(e.target.value || 1))} disabled={processing} className="flex-1 min-w-[220px]" />
+              <button type="button" className="btn btn-outline" onClick={() => setZoom(prev => Math.min(2.5, Number((prev + 0.1).toFixed(2))))} disabled={processing || zoom >= 2.5}>
+                <i className="fas fa-magnifying-glass-plus mr-2"></i>Zoom In
+              </button>
+              <div className="rounded-xl bg-white border border-slate-200 px-3 py-2 text-sm font-bold text-slate-700">{Math.round(zoom * 100)}%</div>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 overflow-hidden bg-slate-950">
+            <div className="aspect-[16/9] w-full relative overflow-hidden">
+              {sourceDataUrl ? <img src={sourceDataUrl} alt="Editable login background" className="absolute inset-0 w-full h-full object-cover transition-transform duration-150" style={{ transform: `scale(${zoom})`, transformOrigin: 'center center' }} /> : null}
+              <div className="absolute inset-x-0 top-0 p-4 text-white flex items-center justify-between text-xs font-bold tracking-[0.2em] uppercase">
+                <span className="rounded-full bg-black/35 px-3 py-1 backdrop-blur">Live Preview</span>
+                <span className="rounded-full bg-black/35 px-3 py-1 backdrop-blur">Login Screen</span>
+              </div>
+              <div className="absolute inset-x-0 bottom-0 p-5 text-white bg-gradient-to-t from-black/55 to-transparent">
+                <div className="text-xl font-extrabold leading-tight">{(value || sourceDataUrl) ? 'Background preview ready' : 'Login page background preview'}</div>
+                <div className="text-sm text-white/90">Adjust the image until it fits the login screen the way you want before saving.</div>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-2">
+            <button type="button" className="btn btn-secondary" onClick={() => setEditorOpen(false)} disabled={processing}>Cancel</button>
+            <button type="button" className="btn btn-primary" onClick={applyEditedImage} disabled={processing}>
+              <i className={`fas ${processing ? 'fa-spinner fa-spin' : 'fa-check'} mr-2`}></i>{processing ? 'Applying Image...' : 'Apply Edited Image'}
+            </button>
+          </div>
+        </div>
+      </Modal>
+    </div>
+  </div>;
+}
 function MultiCheckbox({ label, items, value, onChange, getLabel=(x)=>x.label || x.name }) { const current = safeArray(value); const toggle = id => current.includes(id) ? onChange(current.filter(x => x !== id)) : onChange([...current, id]); return <div><label className="block text-sm font-semibold mb-2">{label}</label><div className="grid md:grid-cols-2 gap-2 border rounded-xl p-3 bg-slate-50">{items.map(item => <label key={item.id} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={current.includes(item.id)} onChange={() => toggle(item.id)} /><span>{getLabel(item)}</span></label>)}</div></div>; }
 function RoleStatusDot({ online, label }) { return <span className={`pill ${online ? 'online' : 'offline'}`}><i className="fas fa-circle text-[8px]"></i> {label}: {online ? 'Online' : 'Offline'}</span>; }
 function PrintButton({ label='Print', onClick=printCurrent }) { return <button onClick={onClick} className="btn btn-outline"><i className="fas fa-print mr-2"></i>{label}</button>; }
@@ -1951,6 +2145,20 @@ function extractFirstName(fullName) {
   const cleaned = String(fullName || '').replace(/\s+/g, ' ').trim();
   if (!cleaned) return 'User';
   return cleaned.split(' ')[0] || 'User';
+}
+function sanitizePayrollIdentityPart(value='') {
+  return String(value || '').replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+}
+function generatePayrollNumberFromTeacher(teacher={}, existingPayroll=[]) {
+  const firstName = extractFirstName(teacher?.full_name || 'Teacher');
+  const base = sanitizePayrollIdentityPart(firstName) || 'TEACHER';
+  const peers = safeArray(existingPayroll).filter(item => item?.teacher_id !== teacher?.id && String(item?.payroll_number || '').startsWith(`PAY-${base}-`));
+  const nextSeq = peers.reduce((max, item) => {
+    const match = String(item?.payroll_number || '').match(/-(\d{3,})$/);
+    const seq = match ? Number(match[1]) : 0;
+    return Math.max(max, Number.isFinite(seq) ? seq : 0);
+  }, 0) + 1;
+  return `PAY-${base}-${String(nextSeq).padStart(3, '0')}`;
 }
 function resolveGreetingMessage(template, fallback, context={}) {
   const source = String(template || '').trim() || String(fallback || '').trim();
@@ -2278,10 +2486,10 @@ function Sidebar() {
   const items = React.useMemo(() => {
     let navItems = [];
     if (session.role === 'admin') navItems = [['dashboard', 'Dashboard', 'tachometer-alt'], ['principals', 'Principal Management', 'crown'], ['teachers', 'Teachers Management', 'chalkboard-user'], ['students', 'Students Management', 'user-graduate'], ['parents', 'Parents Management', 'users'], ['accountstaff', 'Account Office Staff', 'calculator'], ['classes', 'Classes Management', 'layer-group'], ['subjects', 'Subjects Management', 'book'], ['timetable', 'Timetable Management', 'clock'], ['accounts', 'Accounts & Credentials', 'key'], ['archive', 'Archive Records', 'box-archive'], ['chat', 'System Chat', 'comments'], ['settings', 'School Logo & Details', 'cog']];
-    else if (session.role === 'teacher') navItems = [['dashboard', 'Dashboard', 'tachometer-alt'], ['students', 'Student Management', 'users'], ['attendance', 'Attendance Records', 'calendar-check'], ['grades', 'Grades', 'star'], ['timetable', 'Timetable', 'clock'], ['chat', 'System Chat', 'comments'], ['profile', 'My Profile', 'image']];
+    else if (session.role === 'teacher') navItems = [['dashboard', 'Dashboard', 'tachometer-alt'], ['students', 'Student Management', 'users'], ['attendance', 'Attendance Records', 'calendar-check'], ['grades', 'Grades', 'star'], ['salary', 'Salary Record', 'wallet'], ['timetable', 'Timetable', 'clock'], ['chat', 'System Chat', 'comments'], ['profile', 'My Profile', 'image']];
     else if (session.role === 'student') navItems = [['dashboard', 'Dashboard', 'tachometer-alt'], ['grades', 'Grades', 'star'], ['attendance', 'Attendance Records', 'calendar'], ['fees', 'Fee Payments', 'money-bill-wave'], ['timetable', 'Timetable', 'clock'], ['chat', 'System Chat', 'comments']];
     else if (session.role === 'parent') navItems = [['dashboard', 'Dashboard', 'tachometer-alt'], ['grades', 'Grades', 'star'], ['attendance', 'Attendance Records', 'calendar'], ['fees', 'Fee Payments', 'money-bill-wave'], ['chat', 'System Chat', 'comments']];
-    else if (session.role === 'accountant') navItems = [['dashboard', 'Dashboard', 'tachometer-alt'], ['fees', 'Fee Payments', 'hand-holding-usd'], ['statements', 'Fees Statement', 'file-invoice'], ['parentcontacts', 'Parent Contacts', 'address-book'], ['gradelock', 'Grades Lock Control', 'lock']];
+    else if (session.role === 'accountant') navItems = [['dashboard', 'Dashboard', 'tachometer-alt'], ['fees', 'Fee Payments', 'hand-holding-usd'], ['payroll', 'Teacher Salary Structure', 'wallet'], ['statements', 'Fees Statement', 'file-invoice'], ['parentcontacts', 'Parent Contacts', 'address-book'], ['gradelock', 'Grades Lock Control', 'lock']];
     else if (session.role === 'principal') navItems = [['dashboard', 'Dashboard', 'tachometer-alt'], ['students', 'Student Management', 'user-graduate'], ['teachers', 'Teacher Management', 'chalkboard-user'], ['academic', 'Academic Performance', 'chart-line'], ['attendance', 'Attendance Summary', 'calendar-alt'], ['chat', 'System Chat', 'comments']];
     return session.role ? [...navItems, ['logout', 'Logout', 'sign-out-alt']] : navItems;
   }, [session.role]);
@@ -2659,7 +2867,7 @@ function SchoolSettingsManager() {
 
           <div className="grid lg:grid-cols-[1.1fr_.9fr] gap-4 items-start border-b border-slate-200 pb-4">
             <div className="space-y-3">
-              <ImageInput label="Login Screen Background Image" storageFolder="login-background" value={form.login_background_url || ''} onChange={v => setForm({ ...form, login_background_url: v })} />
+              <LoginBackgroundEditorInput label="Login Screen Background Image" storageFolder="login-background" value={form.login_background_url || ''} onChange={v => setForm({ ...form, login_background_url: v })} />
               <div className="theme-preview-swatch relative min-h-[140px]" style={form.login_background_url ? { backgroundImage: `linear-gradient(rgba(15,23,42,.42), rgba(15,23,42,.30)), url(${form.login_background_url})`, backgroundSize: 'cover', backgroundPosition: 'center' } : { background: 'linear-gradient(135deg, #dbe4ee 0%, #94a3b8 50%, #475569 100%)' }}>
                 <div className="absolute inset-0 p-4 flex flex-col justify-between text-white">
                   <div className="inline-flex w-fit items-center gap-2 rounded-full bg-white/20 px-3 py-1 text-xs font-bold uppercase tracking-[0.2em] backdrop-blur">Login Preview</div>
@@ -2747,6 +2955,7 @@ function TeacherDashboard({ activeNav }) {
   if (activeNav === 'students') return <TeacherStudentView teacher={teacher} />;
   if (activeNav === 'attendance') return <TeacherAttendance teacher={teacher} />;
   if (activeNav === 'grades') return <TeacherGrades teacher={teacher} />;
+  if (activeNav === 'salary') return <TeacherSalaryView teacher={teacher} />;
   if (activeNav === 'timetable') return <TimetableManagement teacherId={teacher.id} />;
   if (activeNav === 'chat') return <ChatManagement role="teacher" linkedId={teacher.id} />;
   if (activeNav === 'profile') return <div className="card p-5 max-w-3xl"><SectionHeader title="My Profile" subtitle="Teacher can upload own photo, save, and edit." /><ImageInput label="Photo" storageFolder="teachers" value={profile.photo_url} onChange={v => setProfile({ ...profile, photo_url: v })} /><div className="grid md:grid-cols-2 gap-4 mt-4"><Field label="Full Name"><input className="input" value={profile.full_name || ''} onChange={e => setProfile({ ...profile, full_name: e.target.value })} /></Field><Field label="Contact Address"><input className="input" value={profile.contact_address || ''} onChange={e => setProfile({ ...profile, contact_address: e.target.value })} /></Field></div><button className="btn btn-primary mt-4" onClick={() => updateCollection('teachers', items => items.map(t => t.id === teacher.id ? { ...t, ...profile } : t))}>Save Profile</button></div>;
@@ -2822,6 +3031,313 @@ function TeacherGrades({ teacher }) {
   };
   const livePreview = calcGradeRecord(form);
   return <div className="space-y-4"><SectionHeader title="Grades" subtitle="BECE grading uses Mid Semester A as a direct 30 mark entry and End of Semester B as a raw score out of 100 that auto converts to 70 marks. Students and parents only see grades after publish." actions={<><Field label=""><select className="select" value={filterClass} onChange={e => setFilterClass(e.target.value)}><option value="">All assigned classes</option>{teacherClasses.map(c => <option key={c.id} value={c.id}>{fullClassName(c)}</option>)}</select></Field><button onClick={() => { setForm({ ...emptyGrade, class_id: teacher.assigned_class_ids?.[0] || '' }); setOpen(true); }} className="btn btn-primary"><i className="fas fa-plus mr-2"></i>Add Student Grade</button></>} /><Table columns={['Student','Class','Subject','Term','Mid Semester Exams A (30)','End of Semester Exams B (70)','Total A+B (100)','Grade','Interpretation','Position','Teacher Initial','Publish','Lock','Actions']} rows={rows} renderCell={(row,c) => { if (c === 'Student') return data.students.find(x => x.id === row.student_id)?.full_name || ''; if (c === 'Class') return fullClassName(data.classes.find(x => x.id === row.class_id)); if (c === 'Subject') return data.subjects.find(x => x.id === row.subject_id)?.name || ''; if (c === 'Term') return row.term; if (c === 'Mid Semester Exams A (30)') return <span className="text-blue-700 font-bold">{row.mid_exam_30}</span>; if (c === 'End of Semester Exams B (70)') return <span className="text-blue-700 font-bold">{row.end_exam_70}</span>; if (c === 'Total A+B (100)') return <span className="text-red-700 font-extrabold">{row.total_score}</span>; if (c === 'Grade') return <span className="text-blue-700 font-bold">{row.grade_letter}</span>; if (c === 'Interpretation') return <span className="text-blue-700 font-bold">{row.interpretation}</span>; if (c === 'Position') return <span className="text-green-700 font-extrabold">{row.position}</span>; if (c === 'Teacher Initial') return row.teacher_initial; if (c === 'Publish') return <button className={`btn !px-3 !py-2 text-sm ${row.is_published ? 'btn-outline' : 'btn-primary'}`} onClick={() => togglePublish(row)}>{row.is_published ? 'Unpublish' : 'Publish'}</button>; if (c === 'Lock') return <span className={`pill ${row.locked ? 'absent' : 'online'}`}>{row.locked ? 'Locked' : 'Open'}</span>; if (c === 'Actions') return <div className="flex gap-2"><button className="btn btn-outline" onClick={() => edit(row)}>Edit</button><button className="btn btn-danger" onClick={() => remove(row.id)}>Delete</button></div>; }} /><Modal open={open} onClose={() => setOpen(false)} title={form.id ? 'Edit Student Grade' : 'Add Student Grade'}><form onSubmit={save} className="space-y-4"><div className="grid md:grid-cols-2 gap-4"><Field label="Class"><select className="select" required value={form.class_id} onChange={e => setForm({ ...form, class_id: e.target.value, student_id: '' })}><option value="">Select class</option>{teacherClasses.map(c => <option key={c.id} value={c.id}>{fullClassName(c)}</option>)}</select></Field><Field label="Term"><select className="select" value={form.term} onChange={e => setForm({ ...form, term: e.target.value })}>{TERMS.map(x => <option key={x}>{x}</option>)}</select></Field><Field label="Academic Year"><input className="input" value={form.academic_year} onChange={e => setForm({ ...form, academic_year: e.target.value })} /></Field><Field label="Student"><select className="select" required value={form.student_id} onChange={e => setForm({ ...form, student_id: e.target.value })}><option value="">Select student</option>{studentOptions.map(s => <option key={s.id} value={s.id}>{s.full_name}</option>)}</select></Field><Field label="Subject"><select className="select" required value={form.subject_id} onChange={e => setForm({ ...form, subject_id: e.target.value })}><option value="">Select subject</option>{teacherSubjects.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field><Field label="Mid Semester Exams A Direct Entry (/30)"><input type="number" min="0" max="30" className="input text-blue-700 font-bold" value={form.mid_exam_30} onChange={e => setForm({ ...form, mid_exam_30: e.target.value })} /><div className="text-xs text-slate-500 mt-1">Enter the actual Mid Semester A score directly out of 30. No automatic conversion. Score used: {livePreview.weighted_mid_exam_30 || 0}</div></Field><Field label="End of Semester Exams B Raw Score (/100)"><input type="number" min="0" max="100" className="input text-blue-700 font-bold" value={form.end_exam_70} onChange={e => setForm({ ...form, end_exam_70: e.target.value })} /><div className="text-xs text-slate-500 mt-1">Auto converts to 70 marks. Weighted score: {livePreview.weighted_end_exam_70 || 0}</div></Field><Field label="Auto Total"><input className="input text-red-700 font-extrabold" readOnly value={livePreview.total_score || 0} /></Field><Field label="Auto Grade"><input className="input text-blue-700 font-bold" readOnly value={livePreview.grade_letter || ''} /></Field><Field label="Auto Interpretation"><input className="input text-blue-700 font-bold" readOnly value={livePreview.interpretation || ''} /></Field><Field label="Publish Status"><input className="input text-green-700 font-extrabold" readOnly value={form.is_published ? 'Published' : 'Draft until you click Publish'} /></Field><Field label="Position"><input className="input text-green-700 font-extrabold" readOnly value={form.id ? form.position || '' : 'Auto after save'} /></Field></div><div className="flex justify-end gap-2"><button type="button" className="btn btn-secondary" onClick={() => setOpen(false)}>Cancel</button><button type="submit" className="btn btn-primary">{form.id ? 'Update Grade' : 'Save Grade'}</button></div></form></Modal></div>;
+}
+
+function TeacherSalaryStructure({ officer }) {
+  const { data, updateCollection, notify } = React.useContext(DataContext);
+  const [gradeOpen, setGradeOpen] = React.useState(false);
+  const [gradeForm, setGradeForm] = React.useState(emptySalaryGrade);
+  const [payrollOpen, setPayrollOpen] = React.useState(false);
+  const [payrollForm, setPayrollForm] = React.useState(emptyTeacherPayroll);
+  const [paymentOpen, setPaymentOpen] = React.useState(false);
+  const [paymentForm, setPaymentForm] = React.useState(emptyMonthlySalaryPayment);
+  const [filterTeacher, setFilterTeacher] = React.useState('');
+  const [filterMonth, setFilterMonth] = React.useState('');
+  const [filterYear, setFilterYear] = React.useState('');
+
+  const gradeRows = safeArray(data.salaryGrades).slice().sort((a, b) => String(a.grade_id || '').localeCompare(String(b.grade_id || '')));
+  const payrollRows = safeArray(data.teacherPayroll).slice().sort((a, b) => {
+    const aTeacher = data.teachers.find(t => t.id === a.teacher_id)?.full_name || '';
+    const bTeacher = data.teachers.find(t => t.id === b.teacher_id)?.full_name || '';
+    return aTeacher.localeCompare(bTeacher);
+  });
+  const paymentRows = safeArray(data.monthlySalaryPayments)
+    .filter(row => !filterTeacher || row.teacher_id === filterTeacher)
+    .filter(row => !filterMonth || row.payment_month === filterMonth)
+    .filter(row => !filterYear || String(row.payment_year || '') === String(filterYear || ''))
+    .slice()
+    .sort((a, b) => Number(b.payment_year || 0) - Number(a.payment_year || 0) || String(b.payment_month || '').localeCompare(String(a.payment_month || '')) || new Date(b.paid_date || 0) - new Date(a.paid_date || 0));
+
+  const selectedTeacherForPayroll = safeArray(data.teachers).find(item => item.id === payrollForm.teacher_id) || null;
+  const selectedGrade = safeArray(data.salaryGrades).find(item => item.id === payrollForm.salary_grade_id) || null;
+  const selectedPayroll = safeArray(data.teacherPayroll).find(item => item.id === paymentForm.payroll_detail_id) || safeArray(data.teacherPayroll).find(item => item.teacher_id === paymentForm.teacher_id) || null;
+  const selectedPaymentGrade = safeArray(data.salaryGrades).find(item => item.id === (paymentForm.salary_grade_id || selectedPayroll?.salary_grade_id)) || null;
+  const paymentGross = salaryPaymentGross(paymentForm);
+  const paymentDeductions = salaryPaymentTotalDeductions(paymentForm);
+  const paymentNet = salaryPaymentNet(paymentForm);
+
+  const openNewGrade = () => { setGradeForm({ ...emptySalaryGrade }); setGradeOpen(true); };
+  const editGrade = row => { setGradeForm({ ...row }); setGradeOpen(true); };
+  const saveGrade = async (e) => {
+    e.preventDefault();
+    const payload = {
+      ...gradeForm,
+      id: gradeForm.id || uid(),
+      grade_id: String(gradeForm.grade_id || '').trim(),
+      basic_pay: Math.max(0, Number(gradeForm.basic_pay || 0)),
+      house_allowance: Math.max(0, Number(gradeForm.house_allowance || 0)),
+      transport_allowance: Math.max(0, Number(gradeForm.transport_allowance || 0)),
+      position_allowance: Math.max(0, Number(gradeForm.position_allowance || 0))
+    };
+    if (!payload.grade_id) throw new Error('Salary grade ID is required.');
+    const duplicate = safeArray(data.salaryGrades).find(item => item.id !== payload.id && String(item.grade_id || '').trim().toLowerCase() === payload.grade_id.toLowerCase());
+    if (duplicate) { notify('error', 'That salary grade ID already exists.'); return; }
+    await updateCollection('salaryGrades', items => items.some(item => item.id === payload.id) ? items.map(item => item.id === payload.id ? payload : item) : [payload, ...items]);
+    notify('success', 'Salary grade saved successfully.');
+    setGradeOpen(false);
+    setGradeForm(emptySalaryGrade);
+  };
+  const removeGrade = async (row) => {
+    const inUse = safeArray(data.teacherPayroll).some(item => item.salary_grade_id === row.id);
+    if (inUse) { notify('error', 'This salary grade is already assigned to a teacher payroll record.'); return; }
+    if (!confirmDeleteAction('this salary grade')) return;
+    await updateCollection('salaryGrades', items => items.filter(item => item.id !== row.id));
+    notify('success', 'Salary grade removed successfully.');
+  };
+
+  const openNewPayroll = () => { setPayrollForm({ ...emptyTeacherPayroll, effective_from: today() }); setPayrollOpen(true); };
+  const editPayroll = row => { setPayrollForm({ ...row }); setPayrollOpen(true); };
+  const savePayroll = async (e) => {
+    e.preventDefault();
+    const teacherRecord = safeArray(data.teachers).find(item => item.id === payrollForm.teacher_id) || null;
+    const generatedPayrollNumber = teacherRecord ? generatePayrollNumberFromTeacher(teacherRecord, safeArray(data.teacherPayroll)) : '';
+    const payload = {
+      ...payrollForm,
+      id: payrollForm.id || uid(),
+      payroll_number: String(payrollForm.payroll_number || generatedPayrollNumber || '').trim(),
+      loan_balance: Math.max(0, Number(payrollForm.loan_balance || 0)),
+      effective_from: payrollForm.effective_from || today(),
+      account_status: payrollForm.account_status || 'Active'
+    };
+    if (!payload.teacher_id) { notify('error', 'Select a teacher before saving payroll details.'); return; }
+    if (!payload.salary_grade_id) { notify('error', 'Select a salary grade before saving payroll details.'); return; }
+    const duplicate = safeArray(data.teacherPayroll).find(item => item.id !== payload.id && item.teacher_id === payload.teacher_id);
+    if (duplicate) { notify('error', 'Each teacher can have only one active payroll details record.'); return; }
+    await updateCollection('teacherPayroll', items => items.some(item => item.id === payload.id) ? items.map(item => item.id === payload.id ? payload : item) : [payload, ...items]);
+    notify('success', 'Teacher payroll details saved successfully.');
+    setPayrollOpen(false);
+    setPayrollForm(emptyTeacherPayroll);
+  };
+  const removePayroll = async (row) => {
+    const inUse = safeArray(data.monthlySalaryPayments).some(item => item.payroll_detail_id === row.id);
+    if (inUse) { notify('error', 'This payroll detail already has monthly payment records.'); return; }
+    if (!confirmDeleteAction('this teacher payroll detail')) return;
+    await updateCollection('teacherPayroll', items => items.filter(item => item.id !== row.id));
+    notify('success', 'Teacher payroll detail removed successfully.');
+  };
+
+  const openNewPayment = () => { setPaymentForm({ ...emptyMonthlySalaryPayment, payment_year: new Date().getFullYear().toString(), payment_month: new Date().toLocaleString('en-GB', { month: 'long' }), paid_date: today(), payment_method: 'Bank Transfer', payment_status: 'Paid' }); setPaymentOpen(true); };
+  const editPayment = row => { setPaymentForm({ ...row }); setPaymentOpen(true); };
+  const handlePaymentTeacherChange = (teacherId) => {
+    const payroll = safeArray(data.teacherPayroll).find(item => item.teacher_id === teacherId) || null;
+    const grade = payroll ? safeArray(data.salaryGrades).find(item => item.id === payroll.salary_grade_id) || null : null;
+    setPaymentForm(prev => ({
+      ...prev,
+      teacher_id: teacherId,
+      payroll_detail_id: payroll?.id || '',
+      salary_grade_id: payroll?.salary_grade_id || '',
+      basic_pay: Number(grade?.basic_pay || 0),
+      house_allowance: Number(grade?.house_allowance || 0),
+      transport_allowance: Number(grade?.transport_allowance || 0),
+      position_allowance: Number(grade?.position_allowance || 0),
+      loan_deduction: Math.min(Number(prev.loan_deduction || 0), Number(payroll?.loan_balance || 0))
+    }));
+  };
+  const savePayment = async (e) => {
+    e.preventDefault();
+    const payroll = safeArray(data.teacherPayroll).find(item => item.id === paymentForm.payroll_detail_id) || safeArray(data.teacherPayroll).find(item => item.teacher_id === paymentForm.teacher_id) || null;
+    if (!paymentForm.teacher_id) { notify('error', 'Select a teacher before saving monthly salary payment.'); return; }
+    if (!payroll) { notify('error', 'The selected teacher needs payroll details before a monthly payment can be saved.'); return; }
+    const duplicate = safeArray(data.monthlySalaryPayments).find(item => item.id !== paymentForm.id && item.teacher_id === paymentForm.teacher_id && item.payment_month === paymentForm.payment_month && String(item.payment_year || '') === String(paymentForm.payment_year || ''));
+    if (duplicate) { notify('error', 'That teacher already has a salary payment record for the selected month and year.'); return; }
+    const maxLoan = Math.max(0, Number(payroll.loan_balance || 0));
+    const loanDeduction = Math.max(0, Math.min(maxLoan, Number(paymentForm.loan_deduction || 0)));
+    const payload = {
+      ...paymentForm,
+      id: paymentForm.id || uid(),
+      payroll_detail_id: payroll.id,
+      salary_grade_id: payroll.salary_grade_id,
+      payment_year: String(paymentForm.payment_year || ''),
+      basic_pay: Math.max(0, Number(paymentForm.basic_pay || 0)),
+      house_allowance: Math.max(0, Number(paymentForm.house_allowance || 0)),
+      transport_allowance: Math.max(0, Number(paymentForm.transport_allowance || 0)),
+      position_allowance: Math.max(0, Number(paymentForm.position_allowance || 0)),
+      tax_deduction: Math.max(0, Number(paymentForm.tax_deduction || 0)),
+      ssnit_deduction: Math.max(0, Number(paymentForm.ssnit_deduction || 0)),
+      loan_deduction: loanDeduction,
+      other_deduction: Math.max(0, Number(paymentForm.other_deduction || 0)),
+      paid_date: paymentForm.paid_date || today(),
+      payment_method: paymentForm.payment_method || 'Bank Transfer',
+      payment_status: paymentForm.payment_status || 'Paid',
+      notes: paymentForm.notes || ''
+    };
+    const gross = salaryPaymentGross(payload);
+    const deductions = salaryPaymentTotalDeductions(payload);
+    if (deductions > gross) { notify('error', 'Total deductions cannot be more than gross salary.'); return; }
+    const previousLoanDeduction = paymentForm.id ? Number(safeArray(data.monthlySalaryPayments).find(item => item.id === paymentForm.id)?.loan_deduction || 0) : 0;
+    const nextLoanBalance = Math.max(0, maxLoan - loanDeduction + previousLoanDeduction);
+    await updateCollection('monthlySalaryPayments', items => items.some(item => item.id === payload.id) ? items.map(item => item.id === payload.id ? payload : item) : [payload, ...items]);
+    if (nextLoanBalance !== maxLoan) {
+      await updateCollection('teacherPayroll', items => items.map(item => item.id === payroll.id ? { ...item, loan_balance: nextLoanBalance } : item), { silentSuccess: true, suppressBusy: true, offlineNotice: false, successMessage: 'Teacher payroll details updated.', offlineSuccessMessage: 'Teacher payroll details updated locally.' });
+    }
+    notify('success', 'Monthly salary payment saved successfully.');
+    setPaymentOpen(false);
+    setPaymentForm(emptyMonthlySalaryPayment);
+  };
+  const removePayment = async (row) => {
+    if (!confirmDeleteAction('this monthly salary payment')) return;
+    const payroll = safeArray(data.teacherPayroll).find(item => item.id === row.payroll_detail_id) || null;
+    await updateCollection('monthlySalaryPayments', items => items.filter(item => item.id !== row.id));
+    if (payroll && Number(row.loan_deduction || 0) > 0) {
+      await updateCollection('teacherPayroll', items => items.map(item => item.id === payroll.id ? { ...item, loan_balance: Number(item.loan_balance || 0) + Number(row.loan_deduction || 0) } : item), { silentSuccess: true, suppressBusy: true, offlineNotice: false, successMessage: 'Teacher payroll details updated.', offlineSuccessMessage: 'Teacher payroll details updated locally.' });
+    }
+    notify('success', 'Monthly salary payment removed successfully.');
+  };
+
+  return <div className="space-y-6">
+    <SectionHeader title="Teacher Salary Structure" subtitle="Set salary grades, assign each teacher to a payroll grade, and record monthly salary payments with deductions and loans." actions={<><Field label=""><select className="select" value={filterTeacher} onChange={e => setFilterTeacher(e.target.value)}><option value="">All teachers</option>{data.teachers.map(t => <option key={t.id} value={t.id}>{t.full_name}</option>)}</select></Field><Field label=""><select className="select" value={filterMonth} onChange={e => setFilterMonth(e.target.value)}><option value="">All months</option>{Array.from(new Set(safeArray(data.monthlySalaryPayments).map(item => item.payment_month).filter(Boolean))).sort().map(month => <option key={month}>{month}</option>)}</select></Field><Field label=""><input className="input" placeholder="Year" value={filterYear} onChange={e => setFilterYear(e.target.value)} /></Field></>} />
+    <div className="grid-fit">
+      <StatCard label="Salary Grades" value={gradeRows.length} icon="layer-group" accent="blue" />
+      <StatCard label="Teacher Payroll Records" value={payrollRows.length} icon="id-badge" accent="emerald" />
+      <StatCard label="Monthly Salary Payments" value={safeArray(data.monthlySalaryPayments).length} icon="wallet" accent="amber" />
+      <StatCard label="Processed by Accounts" value={officer.full_name || 'Accounts'} icon="user-tie" accent="rose" />
+    </div>
+
+    <div className="card p-4 space-y-3">
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3"><div><div className="font-bold text-lg">Salary Grades</div><div className="text-sm text-slate-500">Basic pay and allowance structure for each approved salary grade.</div></div><button className="btn btn-primary" onClick={openNewGrade}><i className="fas fa-plus mr-2"></i>Add Salary Grade</button></div>
+      <Table columns={['Grade ID','Basic Pay','House Allowance','Transport Allowance','Position Allowance','Gross Salary','Actions']} rows={gradeRows} renderCell={(row, c) => {
+        if (c === 'Grade ID') return row.grade_id;
+        if (c === 'Basic Pay') return money(row.basic_pay);
+        if (c === 'House Allowance') return money(row.house_allowance);
+        if (c === 'Transport Allowance') return money(row.transport_allowance);
+        if (c === 'Position Allowance') return money(row.position_allowance);
+        if (c === 'Gross Salary') return <span className={amountColorClass('due')}>{money(salaryGradeGross(row))}</span>;
+        if (c === 'Actions') return <div className="flex gap-2"><button className="btn btn-outline" onClick={() => editGrade(row)}>Edit</button><button className="btn btn-danger" onClick={() => removeGrade(row)}>Delete</button></div>;
+      }} />
+    </div>
+
+    <div className="card p-4 space-y-3">
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3"><div><div className="font-bold text-lg">Teacher Payroll Details</div><div className="text-sm text-slate-500">Link each teacher to one salary grade and track payroll numbers, deductions identity, and school loan balance.</div></div><button className="btn btn-primary" onClick={openNewPayroll}><i className="fas fa-plus mr-2"></i>Add Payroll Details</button></div>
+      <Table columns={['Teacher','Staff Number','Salary Grade','Payroll Number','Tax No.','SSNIT No.','Loan Balance','Effective From','Account','Actions']} rows={payrollRows} renderCell={(row, c) => {
+        const teacher = data.teachers.find(item => item.id === row.teacher_id);
+        const grade = data.salaryGrades.find(item => item.id === row.salary_grade_id);
+        if (c === 'Teacher') return teacher?.full_name || '';
+        if (c === 'Staff Number') return teacher?.staff_number || '';
+        if (c === 'Salary Grade') return grade?.grade_id || '';
+        if (c === 'Payroll Number') return row.payroll_number || '';
+        if (c === 'Tax No.') return row.tax_number || '';
+        if (c === 'SSNIT No.') return row.ssnit_number || '';
+        if (c === 'Loan Balance') return <span className={amountColorClass(Number(row.loan_balance || 0) > 0 ? 'outstanding' : 'credit')}>{money(row.loan_balance)}</span>;
+        if (c === 'Effective From') return row.effective_from || '';
+        if (c === 'Account') return <span className={`pill ${row.account_status === 'Active' ? 'online' : 'offline'}`}>{row.account_status}</span>;
+        if (c === 'Actions') return <div className="flex gap-2"><button className="btn btn-outline" onClick={() => editPayroll(row)}>Edit</button><button className="btn btn-danger" onClick={() => removePayroll(row)}>Delete</button></div>;
+      }} />
+    </div>
+
+    <div className="card p-4 space-y-3">
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3"><div><div className="font-bold text-lg">Monthly Payments</div><div className="text-sm text-slate-500">Record each teacher salary payment by month, including tax, SSNIT, school loan deductions, and final net pay.</div></div><button className="btn btn-primary" onClick={openNewPayment}><i className="fas fa-plus mr-2"></i>Add Monthly Payment</button></div>
+      <Table columns={['Teacher','Salary Grade','Month','Gross Salary','Tax','Pension','Loan','Other','Net Paid','Status','Paid Date','Actions']} rows={paymentRows} renderCell={(row, c) => {
+        const teacher = data.teachers.find(item => item.id === row.teacher_id);
+        const grade = data.salaryGrades.find(item => item.id === row.salary_grade_id);
+        if (c === 'Teacher') return teacher?.full_name || '';
+        if (c === 'Salary Grade') return grade?.grade_id || '';
+        if (c === 'Month') return `${row.payment_month} ${row.payment_year}`;
+        if (c === 'Gross Salary') return <span className={amountColorClass('due')}>{money(salaryPaymentGross(row))}</span>;
+        if (c === 'Tax') return money(row.tax_deduction);
+        if (c === 'SSNIT') return money(row.ssnit_deduction);
+        if (c === 'Loan') return money(row.loan_deduction);
+        if (c === 'Other') return money(row.other_deduction);
+        if (c === 'Net Paid') return <span className={amountColorClass('paid')}>{money(salaryPaymentNet(row))}</span>;
+        if (c === 'Status') return <span className={`pill ${row.payment_status === 'Paid' ? 'online' : 'late'}`}>{row.payment_status}</span>;
+        if (c === 'Paid Date') return row.paid_date || '';
+        if (c === 'Actions') return <div className="flex gap-2 flex-wrap"><button className="btn btn-outline" onClick={() => editPayment(row)}>Edit</button><button className="btn btn-danger" onClick={() => removePayment(row)}>Delete</button></div>;
+      }} />
+    </div>
+
+    <Modal open={gradeOpen} onClose={() => setGradeOpen(false)} title={gradeForm.id ? 'Edit Salary Grade' : 'Add Salary Grade'}>
+      <form onSubmit={saveGrade} className="space-y-4">
+        <div className="grid md:grid-cols-2 gap-4">
+          <Field label="Grade ID"><select className="select" required value={gradeForm.grade_id || ''} onChange={e => setGradeForm({ ...gradeForm, grade_id: e.target.value })}><option value="">Select grade</option><option value="UP">UP</option><option value="LP">LP</option></select></Field>
+          <Field label="Basic Pay (GHS)"><input type="number" min="0" step="0.01" className="input" required value={gradeForm.basic_pay} onChange={e => setGradeForm({ ...gradeForm, basic_pay: e.target.value })} /></Field>
+          <Field label="House Allowance (GHS)"><input type="number" min="0" step="0.01" className="input" value={gradeForm.house_allowance} onChange={e => setGradeForm({ ...gradeForm, house_allowance: e.target.value })} /></Field>
+          <Field label="Transport Allowance (GHS)"><input type="number" min="0" step="0.01" className="input" value={gradeForm.transport_allowance} onChange={e => setGradeForm({ ...gradeForm, transport_allowance: e.target.value })} /></Field>
+          <Field label="Position Allowance (GHS)"><input type="number" min="0" step="0.01" className="input" value={gradeForm.position_allowance} onChange={e => setGradeForm({ ...gradeForm, position_allowance: e.target.value })} /></Field>
+          <Field label="Gross Salary"><input className="input bg-slate-50" readOnly value={money(Number(gradeForm.basic_pay || 0) + Number(gradeForm.house_allowance || 0) + Number(gradeForm.transport_allowance || 0) + Number(gradeForm.position_allowance || 0))} /></Field>
+        </div>
+        <div className="flex justify-end gap-2"><button type="button" className="btn btn-secondary" onClick={() => setGradeOpen(false)}>Cancel</button><button type="submit" className="btn btn-primary">{gradeForm.id ? 'Update Salary Grade' : 'Save Salary Grade'}</button></div>
+      </form>
+    </Modal>
+
+    <Modal open={payrollOpen} onClose={() => setPayrollOpen(false)} title={payrollForm.id ? 'Edit Teacher Payroll Details' : 'Add Teacher Payroll Details'}>
+      <form onSubmit={savePayroll} className="space-y-4">
+        <div className="grid md:grid-cols-2 gap-4">
+          <Field label="Teacher"><select className="select" required value={payrollForm.teacher_id || ''} onChange={e => { const nextTeacherId = e.target.value; const teacherRecord = data.teachers.find(t => t.id === nextTeacherId) || null; const generatedPayrollNumber = teacherRecord ? generatePayrollNumberFromTeacher(teacherRecord, data.teacherPayroll) : ''; setPayrollForm({ ...payrollForm, teacher_id: nextTeacherId, payroll_number: generatedPayrollNumber || payrollForm.payroll_number || '' }); }}><option value="">Select teacher</option>{data.teachers.map(t => <option key={t.id} value={t.id}>{`${t.full_name} (${t.staff_number || 'No Staff No.'})`}</option>)}</select></Field>
+          <Field label="Salary Grade"><select className="select" required value={payrollForm.salary_grade_id || ''} onChange={e => setPayrollForm({ ...payrollForm, salary_grade_id: e.target.value })}><option value="">Select salary grade</option>{data.salaryGrades.map(item => <option key={item.id} value={item.id}>{`${item.grade_id} (${money(salaryGradeGross(item))})`}</option>)}</select></Field>
+          <Field label="Payroll Number"><input className="input bg-slate-50" readOnly value={payrollForm.payroll_number || (selectedTeacherForPayroll ? generatePayrollNumberFromTeacher(selectedTeacherForPayroll, data.teacherPayroll) : '')} /></Field>
+          <Field label="Tax Number"><input className="input" value={payrollForm.tax_number || ''} onChange={e => setPayrollForm({ ...payrollForm, tax_number: e.target.value })} /></Field>
+          <Field label="SSNIT Number"><input className="input" value={payrollForm.ssnit_number || ''} onChange={e => setPayrollForm({ ...payrollForm, ssnit_number: e.target.value })} /></Field>
+          <Field label="Outstanding School Loan Balance (GHS)"><input type="number" min="0" step="0.01" className="input" value={payrollForm.loan_balance} onChange={e => setPayrollForm({ ...payrollForm, loan_balance: e.target.value })} /></Field>
+          <Field label="Effective From"><input type="date" className="input" value={payrollForm.effective_from || ''} onChange={e => setPayrollForm({ ...payrollForm, effective_from: e.target.value })} /></Field>
+          <Field label="Account Status"><select className="select" value={payrollForm.account_status || 'Active'} onChange={e => setPayrollForm({ ...payrollForm, account_status: e.target.value })}><option>Active</option><option>Inactive</option></select></Field>
+          <div className="md:col-span-2"><Field label="Notes"><textarea className="textarea" rows="3" value={payrollForm.notes || ''} onChange={e => setPayrollForm({ ...payrollForm, notes: e.target.value })}></textarea></Field></div>
+        </div>
+        {selectedGrade ? <div className="card p-4 bg-slate-50 border text-sm"><div className="font-semibold mb-2">Selected Salary Grade Summary</div><div className="grid md:grid-cols-5 gap-3"><div><div className="text-slate-500">Basic</div><div>{money(selectedGrade.basic_pay)}</div></div><div><div className="text-slate-500">House</div><div>{money(selectedGrade.house_allowance)}</div></div><div><div className="text-slate-500">Transport</div><div>{money(selectedGrade.transport_allowance)}</div></div><div><div className="text-slate-500">Position</div><div>{money(selectedGrade.position_allowance)}</div></div><div><div className="text-slate-500">Gross</div><div className="font-bold">{money(salaryGradeGross(selectedGrade))}</div></div></div></div> : null}
+        <div className="flex justify-end gap-2"><button type="button" className="btn btn-secondary" onClick={() => setPayrollOpen(false)}>Cancel</button><button type="submit" className="btn btn-primary">{payrollForm.id ? 'Update Payroll Details' : 'Save Payroll Details'}</button></div>
+      </form>
+    </Modal>
+
+    <Modal open={paymentOpen} onClose={() => setPaymentOpen(false)} title={paymentForm.id ? 'Edit Monthly Salary Payment' : 'Add Monthly Salary Payment'}>
+      <form onSubmit={savePayment} className="space-y-4">
+        <div className="grid md:grid-cols-2 gap-4">
+          <Field label="Teacher"><select className="select" required value={paymentForm.teacher_id || ''} onChange={e => handlePaymentTeacherChange(e.target.value)}><option value="">Select teacher</option>{data.teachers.map(t => <option key={t.id} value={t.id}>{`${t.full_name} (${t.staff_number || 'No Staff No.'})`}</option>)}</select></Field>
+          <Field label="Salary Grade"><input className="input bg-slate-50" readOnly value={selectedPaymentGrade?.grade_id || ''} /></Field>
+          <Field label="Payment Month"><select className="select" value={paymentForm.payment_month || ''} onChange={e => setPaymentForm({ ...paymentForm, payment_month: e.target.value })}>{['January','February','March','April','May','June','July','August','September','October','November','December'].map(month => <option key={month}>{month}</option>)}</select></Field>
+          <Field label="Payment Year"><input className="input" required value={paymentForm.payment_year || ''} onChange={e => setPaymentForm({ ...paymentForm, payment_year: e.target.value })} /></Field>
+          <Field label="Basic Pay (GHS)"><input type="number" min="0" step="0.01" className="input" value={paymentForm.basic_pay} onChange={e => setPaymentForm({ ...paymentForm, basic_pay: e.target.value })} /></Field>
+          <Field label="House Allowance (GHS)"><input type="number" min="0" step="0.01" className="input" value={paymentForm.house_allowance} onChange={e => setPaymentForm({ ...paymentForm, house_allowance: e.target.value })} /></Field>
+          <Field label="Transport Allowance (GHS)"><input type="number" min="0" step="0.01" className="input" value={paymentForm.transport_allowance} onChange={e => setPaymentForm({ ...paymentForm, transport_allowance: e.target.value })} /></Field>
+          <Field label="Position Allowance (GHS)"><input type="number" min="0" step="0.01" className="input" value={paymentForm.position_allowance} onChange={e => setPaymentForm({ ...paymentForm, position_allowance: e.target.value })} /></Field>
+          <Field label="Tax Deduction (GHS)"><input type="number" min="0" step="0.01" className="input" value={paymentForm.tax_deduction} onChange={e => setPaymentForm({ ...paymentForm, tax_deduction: e.target.value })} /></Field>
+          <Field label="SSNIT Deduction (GHS)"><input type="number" min="0" step="0.01" className="input" value={paymentForm.ssnit_deduction} onChange={e => setPaymentForm({ ...paymentForm, ssnit_deduction: e.target.value })} /></Field>
+          <Field label="Loan Deduction From School Loan (GHS)"><input type="number" min="0" step="0.01" className="input" value={paymentForm.loan_deduction} onChange={e => setPaymentForm({ ...paymentForm, loan_deduction: e.target.value })} /></Field>
+          <Field label="Other Deduction (GHS)"><input type="number" min="0" step="0.01" className="input" value={paymentForm.other_deduction} onChange={e => setPaymentForm({ ...paymentForm, other_deduction: e.target.value })} /></Field>
+          <Field label="Payment Method"><select className="select" value={paymentForm.payment_method || 'Bank Transfer'} onChange={e => setPaymentForm({ ...paymentForm, payment_method: e.target.value })}>{PAYMENT_METHODS.map(item => <option key={item}>{item}</option>)}<option>Bank Transfer</option></select></Field>
+          <Field label="Paid Date"><input type="date" className="input" value={paymentForm.paid_date || ''} onChange={e => setPaymentForm({ ...paymentForm, paid_date: e.target.value })} /></Field>
+          <Field label="Payment Status"><select className="select" value={paymentForm.payment_status || 'Paid'} onChange={e => setPaymentForm({ ...paymentForm, payment_status: e.target.value })}><option>Paid</option><option>Pending</option></select></Field>
+          <div className="md:col-span-2"><Field label="Notes"><textarea className="textarea" rows="3" value={paymentForm.notes || ''} onChange={e => setPaymentForm({ ...paymentForm, notes: e.target.value })}></textarea></Field></div>
+        </div>
+        <div className="card p-4 bg-slate-50 border text-sm">
+          <div className="grid md:grid-cols-4 gap-3">
+            <div><div className="text-slate-500">Gross Salary</div><div className="font-bold">{money(paymentGross)}</div></div>
+            <div><div className="text-slate-500">Total Deductions</div><div className={amountColorClass(paymentDeductions > 0 ? 'outstanding' : 'credit')}>{money(paymentDeductions)}</div></div>
+            <div><div className="text-slate-500">Net Salary</div><div className={amountColorClass('paid')}>{money(paymentNet)}</div></div>
+            <div><div className="text-slate-500">Remaining School Loan Balance</div><div>{money(Math.max(0, Number(selectedPayroll?.loan_balance || 0) - Number(paymentForm.loan_deduction || 0)))}</div></div>
+          </div>
+        </div>
+        <div className="flex justify-end gap-2"><button type="button" className="btn btn-secondary" onClick={() => setPaymentOpen(false)}>Cancel</button><button type="submit" className="btn btn-primary">{paymentForm.id ? 'Update Monthly Payment' : 'Save Monthly Payment'}</button></div>
+      </form>
+    </Modal>
+  </div>;
+}
+
+function TeacherSalaryView({ teacher }) {
+  const { data } = React.useContext(DataContext);
+  const bundle = getTeacherPayrollBundle(data, teacher.id);
+  const rows = bundle.payments;
+  return <div className="space-y-4"><SectionHeader title="My Salary Record" subtitle="View your payroll grade, monthly salary payments, and all deductions made by the Accounts Office, including SSNIT and school loans." /><div className="grid-fit"><StatCard label="Salary Grade" value={bundle.grade?.grade_id || 'Not Set'} icon="layer-group" accent="blue" /><StatCard label="Monthly Payments" value={bundle.paymentCount} icon="wallet" accent="emerald" /><StatCard label="Total Net Paid" value={money(bundle.totalNetPaid)} icon="money-bill-wave" accent="amber" /><StatCard label="Current Loan Balance" value={money(bundle.payroll?.loan_balance || 0)} icon="scale-balanced" accent="rose" /></div><div className="card p-5"><div className="grid md:grid-cols-2 gap-4 text-sm"><p><b>Teacher:</b> {teacher.full_name}</p><p><b>Staff Number:</b> {teacher.staff_number || ''}</p><p><b>Payroll Number:</b> {bundle.payroll?.payroll_number || 'Not yet assigned'}</p><p><b>Salary Grade:</b> {bundle.grade?.grade_id || 'Not yet assigned'}</p><p><b>Tax Number:</b> {bundle.payroll?.tax_number || 'Not yet assigned'}</p><p><b>SSNIT Number:</b> {bundle.payroll?.ssnit_number || 'Not yet assigned'}</p></div></div><Table columns={['Month','Gross Salary','Tax','SSNIT','Loan','Other','Total Deductions','Net Paid','Status','Paid Date','Method','Notes']} rows={rows} renderCell={(row, c) => {
+    if (c === 'Month') return `${row.payment_month} ${row.payment_year}`;
+    if (c === 'Gross Salary') return <span className={amountColorClass('due')}>{money(salaryPaymentGross(row))}</span>;
+    if (c === 'Tax') return money(row.tax_deduction);
+    if (c === 'SSNIT') return money(row.ssnit_deduction);
+    if (c === 'Loan') return money(row.loan_deduction);
+    if (c === 'Other') return money(row.other_deduction);
+    if (c === 'Total Deductions') return <span className={amountColorClass('outstanding')}>{money(salaryPaymentTotalDeductions(row))}</span>;
+    if (c === 'Net Paid') return <span className={amountColorClass('paid')}>{money(salaryPaymentNet(row))}</span>;
+    if (c === 'Status') return <span className={`pill ${row.payment_status === 'Paid' ? 'online' : 'late'}`}>{row.payment_status}</span>;
+    if (c === 'Paid Date') return row.paid_date || '';
+    if (c === 'Method') return row.payment_method || '';
+    if (c === 'Notes') return row.notes || '';
+  }} /></div>;
 }
 
 function StudentDashboard({ activeNav }) {
@@ -2911,9 +3427,10 @@ function AccountantDashboard({ activeNav }) {
   if (activeNav === 'dashboard') {
     const owing = data.students.filter(student => getStudentFeeLedger(data.fees, student.id, data.termFeeSettings, data.students).summary.outstanding > 0).length;
     const parentContactCount = data.students.filter(s => !!String(s.parent_phone_contact || '').trim()).length;
-    return <div className="space-y-6"><SectionHeader title={`Welcome, ${officer.full_name}`} subtitle="Accounts Office Staff dashboard for fees, statements, grades lock control, and parent contact follow up." actions={<RoleStatusDot online={data.presence.accountant?.online} label="Accounts Status" />} /><div className="grid-fit"><StatCard label="Fee Records" value={data.fees.length} icon="file-invoice-dollar" accent="emerald" /><StatCard label="Students Owing Fees" value={owing} icon="money-bill-wave" accent="rose" /><StatCard label="Classes" value={data.classes.length} icon="layer-group" accent="blue" /><StatCard label="Parent Contacts" value={parentContactCount} icon="address-book" accent="amber" /></div><div className="card p-5 border border-amber-200 bg-amber-50 text-amber-900"><div className="font-bold text-base mb-2">Parent messaging notice</div><p className="text-sm leading-6">Direct free online SMS to any mobile phone is not available from a normal browser based school system without a telecom gateway or other third party SMS provider, and those services are normally paid. This update adds a no paid service contact workflow with linked parent contacts, one tap SMS app opening, WhatsApp web messaging, click to call, and message copy actions for faster follow up.</p></div></div>;
+    return <div className="space-y-6"><SectionHeader title={`Welcome, ${officer.full_name}`} subtitle="Accounts Office Staff dashboard for fees, salary structure, statements, grades lock control, and parent contact follow up." actions={<RoleStatusDot online={data.presence.accountant?.online} label="Accounts Status" />} /><div className="grid-fit"><StatCard label="Fee Records" value={data.fees.length} icon="file-invoice-dollar" accent="emerald" /><StatCard label="Students Owing Fees" value={owing} icon="money-bill-wave" accent="rose" /><StatCard label="Salary Payments" value={data.monthlySalaryPayments.length} icon="wallet" accent="blue" /><StatCard label="Parent Contacts" value={parentContactCount} icon="address-book" accent="amber" /></div><div className="card p-5 border border-amber-200 bg-amber-50 text-amber-900"><div className="font-bold text-base mb-2">Parent messaging notice</div><p className="text-sm leading-6">Direct free online SMS to any mobile phone is not available from a normal browser based school system without a telecom gateway or other third party SMS provider, and those services are normally paid. This update adds a no paid service contact workflow with linked parent contacts, one tap SMS app opening, WhatsApp web messaging, click to call, and message copy actions for faster follow up.</p></div></div>;
   }
   if (activeNav === 'fees') return <FeePayments officer={officer} />;
+  if (activeNav === 'payroll') return <TeacherSalaryStructure officer={officer} />;
   if (activeNav === 'statements') return <FeesStatement />;
   if (activeNav === 'parentcontacts') return <AccountantParentContacts officer={officer} />;
   if (activeNav === 'gradelock') return <GradeLockControl />;
