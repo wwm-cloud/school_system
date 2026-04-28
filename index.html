@@ -125,27 +125,46 @@ const EMOJI_OPTIONS = ['😀','😁','😂','🤣','😊','😍','😎','🙏','
 const THEME_OPTIONS = {
   emerald: { label: 'Emerald', primary: '#059669', primaryDark: '#047857', primarySoft: '#ecfdf5', bg: '#f8fafc', headerBg: 'rgba(255,255,255,.93)', cardBg: '#ffffff', textStrong: '#065f46' },
   blue: { label: 'Ocean Blue', primary: '#2563eb', primaryDark: '#1d4ed8', primarySoft: '#eff6ff', bg: '#f8fbff', headerBg: 'rgba(255,255,255,.94)', cardBg: '#ffffff', textStrong: '#1d4ed8' },
+  deepBlue: { label: 'Deep Blue', primary: '#0b3d91', primaryDark: '#082f73', primarySoft: '#dbeafe', bg: '#f5f8ff', headerBg: 'rgba(255,255,255,.94)', cardBg: '#ffffff', textStrong: '#0b3d91' },
+  navyBlue: { label: 'Navy Blue', primary: '#172554', primaryDark: '#0f172a', primarySoft: '#e0e7ff', bg: '#f8fafc', headerBg: 'rgba(255,255,255,.94)', cardBg: '#ffffff', textStrong: '#172554' },
+  royalBlue: { label: 'Royal Deep Blue', primary: '#1e40af', primaryDark: '#1e3a8a', primarySoft: '#dbeafe', bg: '#f7faff', headerBg: 'rgba(255,255,255,.94)', cardBg: '#ffffff', textStrong: '#1e3a8a' },
   purple: { label: 'Royal Purple', primary: '#7c3aed', primaryDark: '#6d28d9', primarySoft: '#f5f3ff', bg: '#faf8ff', headerBg: 'rgba(255,255,255,.94)', cardBg: '#ffffff', textStrong: '#6d28d9' },
+  deepViolet: { label: 'Deep Violet', primary: '#581c87', primaryDark: '#3b0764', primarySoft: '#f3e8ff', bg: '#fbf7ff', headerBg: 'rgba(255,255,255,.94)', cardBg: '#ffffff', textStrong: '#581c87' },
   amber: { label: 'Golden Amber', primary: '#d97706', primaryDark: '#b45309', primarySoft: '#fffbeb', bg: '#fffdf7', headerBg: 'rgba(255,255,255,.94)', cardBg: '#ffffff', textStrong: '#b45309' },
   rose: { label: 'Rose Red', primary: '#e11d48', primaryDark: '#be123c', primarySoft: '#fff1f2', bg: '#fff8f8', headerBg: 'rgba(255,255,255,.94)', cardBg: '#ffffff', textStrong: '#9f1239' },
+  burgundy: { label: 'Deep Burgundy', primary: '#881337', primaryDark: '#4c0519', primarySoft: '#ffe4e6', bg: '#fff7f8', headerBg: 'rgba(255,255,255,.94)', cardBg: '#ffffff', textStrong: '#881337' },
   teal: { label: 'Teal Wave', primary: '#0f766e', primaryDark: '#115e59', primarySoft: '#f0fdfa', bg: '#f7fffe', headerBg: 'rgba(255,255,255,.94)', cardBg: '#ffffff', textStrong: '#134e4a' },
+  forestDeep: { label: 'Deep Forest', primary: '#14532d', primaryDark: '#052e16', primarySoft: '#dcfce7', bg: '#f7fff9', headerBg: 'rgba(255,255,255,.94)', cardBg: '#ffffff', textStrong: '#14532d' },
   indigo: { label: 'Indigo Night', primary: '#4f46e5', primaryDark: '#4338ca', primarySoft: '#eef2ff', bg: '#f8faff', headerBg: 'rgba(255,255,255,.94)', cardBg: '#ffffff', textStrong: '#3730a3' },
-  crimson: { label: 'Crimson Gold', primary: '#b91c1c', primaryDark: '#991b1b', primarySoft: '#fef2f2', bg: '#fffafa', headerBg: 'rgba(255,255,255,.94)', cardBg: '#ffffff', textStrong: '#7f1d1d' }
+  crimson: { label: 'Crimson Gold', primary: '#b91c1c', primaryDark: '#991b1b', primarySoft: '#fef2f2', bg: '#fffafa', headerBg: 'rgba(255,255,255,.94)', cardBg: '#ffffff', textStrong: '#7f1d1d' },
+  charcoalGold: { label: 'Charcoal Gold', primary: '#1f2937', primaryDark: '#111827', primarySoft: '#fef3c7', bg: '#fafafa', headerBg: 'rgba(255,255,255,.94)', cardBg: '#ffffff', textStrong: '#111827' }
 };
 const HEADER_THEME_OPTIONS = {
   softWhite: { label: 'Soft White Header', bg: 'rgba(255,255,255,.93)', accent: '#ecfdf5', text: '#0f172a' },
   emeraldGlow: { label: 'Emerald Header', bg: 'linear-gradient(135deg,#ecfdf5 0%,#d1fae5 100%)', accent: '#a7f3d0', text: '#065f46' },
   oceanSky: { label: 'Ocean Header', bg: 'linear-gradient(135deg,#eff6ff 0%,#dbeafe 100%)', accent: '#bfdbfe', text: '#1d4ed8' },
+  deepBlueHeader: { label: 'Deep Blue Header', bg: 'linear-gradient(135deg,#0f172a 0%,#1e3a8a 52%,#2563eb 100%)', accent: '#60a5fa', text: '#f8fafc' },
+  navyHeader: { label: 'Navy Header', bg: 'linear-gradient(135deg,#020617 0%,#172554 55%,#1e40af 100%)', accent: '#93c5fd', text: '#f8fafc' },
   royalViolet: { label: 'Royal Violet Header', bg: 'linear-gradient(135deg,#f5f3ff 0%,#ede9fe 100%)', accent: '#ddd6fe', text: '#6d28d9' },
+  deepPurpleHeader: { label: 'Deep Purple Header', bg: 'linear-gradient(135deg,#2e1065 0%,#581c87 55%,#7e22ce 100%)', accent: '#d8b4fe', text: '#faf5ff' },
+  deepEmeraldHeader: { label: 'Deep Emerald Header', bg: 'linear-gradient(135deg,#022c22 0%,#064e3b 55%,#047857 100%)', accent: '#6ee7b7', text: '#ecfdf5' },
+  burgundyHeader: { label: 'Burgundy Header', bg: 'linear-gradient(135deg,#4c0519 0%,#881337 55%,#be123c 100%)', accent: '#fda4af', text: '#fff1f2' },
   sunsetAmber: { label: 'Sunset Header', bg: 'linear-gradient(135deg,#fff7ed 0%,#ffedd5 100%)', accent: '#fed7aa', text: '#b45309' },
+  charcoalGoldHeader: { label: 'Charcoal Gold Header', bg: 'linear-gradient(135deg,#030712 0%,#111827 60%,#78350f 100%)', accent: '#facc15', text: '#f9fafb' },
   graphite: { label: 'Graphite Header', bg: 'linear-gradient(135deg,#1f2937 0%,#111827 100%)', accent: '#374151', text: '#f9fafb' }
 };
 const FOOTER_THEME_OPTIONS = {
   midnight: { label: 'Midnight Footer', bg: '#0f172a', text: '#e2e8f0', accent: '#86efac' },
   emeraldDeep: { label: 'Emerald Footer', bg: '#064e3b', text: '#ecfdf5', accent: '#a7f3d0' },
+  deepEmeraldFooter: { label: 'Deep Emerald Footer', bg: '#022c22', text: '#ecfdf5', accent: '#6ee7b7' },
   oceanDeep: { label: 'Ocean Footer', bg: '#1e3a8a', text: '#eff6ff', accent: '#93c5fd' },
+  deepBlueFooter: { label: 'Deep Blue Footer', bg: '#0b1f4d', text: '#eff6ff', accent: '#60a5fa' },
+  navyFooter: { label: 'Navy Footer', bg: '#020617', text: '#f8fafc', accent: '#93c5fd' },
   royalDeep: { label: 'Royal Footer', bg: '#4c1d95', text: '#f5f3ff', accent: '#c4b5fd' },
+  deepPurpleFooter: { label: 'Deep Purple Footer', bg: '#2e1065', text: '#faf5ff', accent: '#d8b4fe' },
+  burgundyFooter: { label: 'Burgundy Footer', bg: '#4c0519', text: '#fff1f2', accent: '#fda4af' },
   amberDeep: { label: 'Amber Footer', bg: '#78350f', text: '#fffbeb', accent: '#fcd34d' },
+  charcoalGoldFooter: { label: 'Charcoal Gold Footer', bg: '#030712', text: '#f9fafb', accent: '#facc15' },
   charcoal: { label: 'Charcoal Footer', bg: '#111827', text: '#f3f4f6', accent: '#9ca3af' }
 };
 const FONT_OPTIONS = {
