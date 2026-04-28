@@ -353,6 +353,44 @@ function salaryPaymentTotalDeductions(payment={}) {
 function salaryPaymentNet(payment={}) {
   return Math.max(0, salaryPaymentGross(payment) - salaryPaymentTotalDeductions(payment));
 }
+const SALARY_PAYMENT_PRINT_COLUMNS = ['Teacher','Staff Number','Payroll Number','Salary Grade','Month','Gross Salary','Tax Deduction','SSNIT Deduction','School Loan Deduction','Other Deduction','Total Deductions','Final Net Pay','Payment Status','Paid Date','Payment Method','Notes'];
+function buildSalaryPaymentRecordPrintRows(data={}, rows=[]) {
+  return safeArray(rows).map(row => {
+    const teacher = safeArray(data?.teachers).find(item => item.id === row.teacher_id) || {};
+    const payroll = safeArray(data?.teacherPayroll).find(item => item.id === row.payroll_detail_id) || safeArray(data?.teacherPayroll).find(item => item.teacher_id === row.teacher_id) || {};
+    const grade = safeArray(data?.salaryGrades).find(item => item.id === (row.salary_grade_id || payroll.salary_grade_id)) || {};
+    return {
+      'Teacher': teacher.full_name || '',
+      'Staff Number': teacher.staff_number || '',
+      'Payroll Number': payroll.payroll_number || '',
+      'Salary Grade': grade.grade_id || '',
+      'Month': [row.payment_month, row.payment_year].filter(Boolean).join(' '),
+      'Gross Salary': money(salaryPaymentGross(row)),
+      'Tax Deduction': money(row.tax_deduction),
+      'SSNIT Deduction': money(row.ssnit_deduction),
+      'School Loan Deduction': money(row.loan_deduction),
+      'Other Deduction': money(row.other_deduction),
+      'Total Deductions': money(salaryPaymentTotalDeductions(row)),
+      'Final Net Pay': money(salaryPaymentNet(row)),
+      'Payment Status': row.payment_status || '',
+      'Paid Date': row.paid_date || '',
+      'Payment Method': row.payment_method || '',
+      'Notes': row.notes || ''
+    };
+  });
+}
+function getSalaryPaymentRecordPrintTotals(rows=[]) {
+  const safeRows = safeArray(rows);
+  return {
+    gross: safeRows.reduce((sum, row) => sum + salaryPaymentGross(row), 0),
+    tax: safeRows.reduce((sum, row) => sum + Number(row.tax_deduction || 0), 0),
+    ssnit: safeRows.reduce((sum, row) => sum + Number(row.ssnit_deduction || 0), 0),
+    loan: safeRows.reduce((sum, row) => sum + Number(row.loan_deduction || 0), 0),
+    other: safeRows.reduce((sum, row) => sum + Number(row.other_deduction || 0), 0),
+    deductions: safeRows.reduce((sum, row) => sum + salaryPaymentTotalDeductions(row), 0),
+    net: safeRows.reduce((sum, row) => sum + salaryPaymentNet(row), 0)
+  };
+}
 function getTeacherPayrollBundle(data, teacherId='') {
   const teacher = safeArray(data?.teachers).find(item => item.id === teacherId) || null;
   const payroll = safeArray(data?.teacherPayroll).find(item => item.teacher_id === teacherId) || null;
@@ -3380,9 +3418,23 @@ function TeacherSalaryStructure({ officer }) {
     }
     notify('success', 'Monthly salary payment removed successfully.');
   };
+  const printMonthlyPayments = () => {
+    if (!filterMonth) { notify('error', 'Select a payment month before printing monthly salary payment records.'); return; }
+    const rowsToPrint = safeArray(data.monthlySalaryPayments)
+      .filter(row => row.payment_month === filterMonth)
+      .filter(row => !filterYear || String(row.payment_year || '') === String(filterYear || ''))
+      .slice()
+      .sort((a, b) => Number(b.payment_year || 0) - Number(a.payment_year || 0) || String(a.teacher_id || '').localeCompare(String(b.teacher_id || '')) || new Date(b.paid_date || 0) - new Date(a.paid_date || 0));
+    openRecordsPrint({
+      school: data.schoolSettings,
+      title: `Teacher Salary Payment Records - ${filterMonth}${filterYear ? ' ' + filterYear : ''}`,
+      columns: SALARY_PAYMENT_PRINT_COLUMNS,
+      rows: buildSalaryPaymentRecordPrintRows(data, rowsToPrint)
+    });
+  };
 
   return <div className="space-y-6">
-    <SectionHeader title="Teacher Salary Structure" subtitle="Set salary grades, assign each teacher to a payroll grade, and record monthly salary payments with deductions and loans." actions={<><Field label=""><select className="select" value={filterTeacher} onChange={e => setFilterTeacher(e.target.value)}><option value="">All teachers</option>{data.teachers.map(t => <option key={t.id} value={t.id}>{t.full_name}</option>)}</select></Field><Field label=""><select className="select" value={filterMonth} onChange={e => setFilterMonth(e.target.value)}><option value="">All months</option>{Array.from(new Set(safeArray(data.monthlySalaryPayments).map(item => item.payment_month).filter(Boolean))).sort().map(month => <option key={month}>{month}</option>)}</select></Field><Field label=""><input className="input" placeholder="Year" value={filterYear} onChange={e => setFilterYear(e.target.value)} /></Field></>} />
+    <SectionHeader title="Teacher Salary Structure" subtitle="Set salary grades, assign each teacher to a payroll grade, and record monthly salary payments with deductions and loans." actions={<><Field label=""><select className="select" value={filterTeacher} onChange={e => setFilterTeacher(e.target.value)}><option value="">All teachers</option>{data.teachers.map(t => <option key={t.id} value={t.id}>{t.full_name}</option>)}</select></Field><Field label=""><select className="select" value={filterMonth} onChange={e => setFilterMonth(e.target.value)}><option value="">Select month to print</option>{Array.from(new Set(safeArray(data.monthlySalaryPayments).map(item => item.payment_month).filter(Boolean))).sort().map(month => <option key={month}>{month}</option>)}</select></Field><Field label=""><input className="input" placeholder="Year" value={filterYear} onChange={e => setFilterYear(e.target.value)} /></Field></>} />
     <div className="grid-fit">
       <StatCard label="Salary Grades" value={gradeRows.length} icon="layer-group" accent="blue" />
       <StatCard label="Teacher Payroll Records" value={payrollRows.length} icon="id-badge" accent="emerald" />
@@ -3422,8 +3474,8 @@ function TeacherSalaryStructure({ officer }) {
     </div>
 
     <div className="card p-4 space-y-3">
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3"><div><div className="font-bold text-lg">Monthly Payments</div><div className="text-sm text-slate-500">Record each teacher salary payment by month, including tax, SSNIT, school loan deductions, and final net pay.</div></div><button className="btn btn-primary" onClick={openNewPayment}><i className="fas fa-plus mr-2"></i>Add Monthly Payment</button></div>
-      <Table columns={['Teacher','Salary Grade','Month','Gross Salary','Tax','Pension','Loan','Other','Net Paid','Status','Paid Date','Actions']} rows={paymentRows} renderCell={(row, c) => {
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3"><div><div className="font-bold text-lg">Monthly Payments</div><div className="text-sm text-slate-500">Record each teacher salary payment by month, including tax, SSNIT, school loan deductions, and final net pay.</div></div><div className="flex flex-wrap gap-2"><PrintButton label="Print Monthly Payments Records" onClick={printMonthlyPayments} /><button className="btn btn-primary" onClick={openNewPayment}><i className="fas fa-plus mr-2"></i>Add Monthly Payment</button></div></div>
+      <Table columns={['Teacher','Salary Grade','Month','Gross Salary','Tax','SSNIT','Loan','Other','Net Paid','Status','Paid Date','Actions']} rows={paymentRows} renderCell={(row, c) => {
         const teacher = data.teachers.find(item => item.id === row.teacher_id);
         const grade = data.salaryGrades.find(item => item.id === row.salary_grade_id);
         if (c === 'Teacher') return teacher?.full_name || '';
@@ -3511,7 +3563,15 @@ function TeacherSalaryView({ teacher }) {
   const { data } = React.useContext(DataContext);
   const bundle = getTeacherPayrollBundle(data, teacher.id);
   const rows = bundle.payments;
-  return <div className="space-y-4"><SectionHeader title="My Salary Record" subtitle="View your payroll grade, monthly salary payments, and all deductions made by the Accounts Office, including SSNIT and school loans." /><div className="grid-fit"><StatCard label="Salary Grade" value={bundle.grade?.grade_id || 'Not Set'} icon="layer-group" accent="blue" /><StatCard label="Monthly Payments" value={bundle.paymentCount} icon="wallet" accent="emerald" /><StatCard label="Total Net Paid" value={money(bundle.totalNetPaid)} icon="money-bill-wave" accent="amber" /><StatCard label="Current Loan Balance" value={money(bundle.payroll?.loan_balance || 0)} icon="scale-balanced" accent="rose" /></div><div className="card p-5"><div className="grid md:grid-cols-2 gap-4 text-sm"><p><b>Teacher:</b> {teacher.full_name}</p><p><b>Staff Number:</b> {teacher.staff_number || ''}</p><p><b>Payroll Number:</b> {bundle.payroll?.payroll_number || 'Not yet assigned'}</p><p><b>Salary Grade:</b> {bundle.grade?.grade_id || 'Not yet assigned'}</p><p><b>Tax Number:</b> {bundle.payroll?.tax_number || 'Not yet assigned'}</p><p><b>SSNIT Number:</b> {bundle.payroll?.ssnit_number || 'Not yet assigned'}</p></div></div><Table columns={['Month','Gross Salary','Tax','SSNIT','Loan','Other','Total Deductions','Net Paid','Status','Paid Date','Method','Notes']} rows={rows} renderCell={(row, c) => {
+  const printSalaryPayments = () => {
+    openRecordsPrint({
+      school: data.schoolSettings,
+      title: 'Teacher Salary Payment Records by Month',
+      columns: SALARY_PAYMENT_PRINT_COLUMNS,
+      rows: buildSalaryPaymentRecordPrintRows(data, rows)
+    });
+  };
+  return <div className="space-y-4"><SectionHeader title="My Salary Record" subtitle="View your payroll grade, monthly salary payments, and all deductions made by the Accounts Office, including SSNIT and school loans." actions={<PrintButton label="Print Salary Payment Records" onClick={printSalaryPayments} />} /><div className="grid-fit"><StatCard label="Salary Grade" value={bundle.grade?.grade_id || 'Not Set'} icon="layer-group" accent="blue" /><StatCard label="Monthly Payments" value={bundle.paymentCount} icon="wallet" accent="emerald" /><StatCard label="Total Net Paid" value={money(bundle.totalNetPaid)} icon="money-bill-wave" accent="amber" /><StatCard label="Current Loan Balance" value={money(bundle.payroll?.loan_balance || 0)} icon="scale-balanced" accent="rose" /></div><div className="card p-5"><div className="grid md:grid-cols-2 gap-4 text-sm"><p><b>Teacher:</b> {teacher.full_name}</p><p><b>Staff Number:</b> {teacher.staff_number || ''}</p><p><b>Payroll Number:</b> {bundle.payroll?.payroll_number || 'Not yet assigned'}</p><p><b>Salary Grade:</b> {bundle.grade?.grade_id || 'Not yet assigned'}</p><p><b>Tax Number:</b> {bundle.payroll?.tax_number || 'Not yet assigned'}</p><p><b>SSNIT Number:</b> {bundle.payroll?.ssnit_number || 'Not yet assigned'}</p></div></div><Table columns={['Month','Gross Salary','Tax','SSNIT','Loan','Other','Total Deductions','Net Paid','Status','Paid Date','Method','Notes']} rows={rows} renderCell={(row, c) => {
     if (c === 'Month') return `${row.payment_month} ${row.payment_year}`;
     if (c === 'Gross Salary') return <span className={amountColorClass('due')}>{money(salaryPaymentGross(row))}</span>;
     if (c === 'Tax') return money(row.tax_deduction);
