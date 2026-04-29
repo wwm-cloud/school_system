@@ -1073,8 +1073,8 @@ function buildSchoolIdentityHeaderHtml(school={}, title='School Report', subtitl
   const identity = getSchoolPrintIdentity(school);
   const safeLogoUrl = String(identity.logoUrl || '').trim();
   const logoHtml = safeLogoUrl
-    ? `<img src="${safeLogoUrl}" style="width:68px;height:68px;object-fit:cover;border-radius:16px;border:2px solid #0f766e;background:#fff;" onerror="this.style.display='none'" />`
-    : `<div style="width:68px;height:68px;border-radius:16px;border:2px solid #0f766e;background:#ccfbf1;display:flex;align-items:center;justify-content:center;font-weight:800;color:#115e59;">SMS</div>`;
+    ? `<img src="${safeLogoUrl}" style="width:52px;height:52px;object-fit:cover;border-radius:12px;border:1.5px solid #0f766e;background:#fff;" onerror="this.style.display='none'" />`
+    : `<div class="report-logo-fallback" style="width:52px;height:52px;border-radius:12px;border:1.5px solid #0f766e;background:#ccfbf1;display:flex;align-items:center;justify-content:center;font-weight:800;color:#115e59;">SMS</div>`;
   return `<div class="report-head"><div class="report-head-top">${logoHtml}<div class="report-school-center"><div class="report-school-name">${escapePrintHtml(identity.name)}</div><div class="report-school-sub">${escapePrintHtml(identity.addressLine || 'School record printout')}</div><div class="report-school-sub">${escapePrintHtml(identity.contact || '')}</div></div>${logoHtml}</div><div class="report-title">${escapePrintHtml(title)}</div>${subtitle ? `<div class="report-title-sub">${escapePrintHtml(subtitle)}</div>` : ''}</div>`;
 }
 function getProfessionalRecordsReportType(title='') {
@@ -1085,27 +1085,63 @@ function getProfessionalRecordsReportType(title='') {
   return 'standard-records';
 }
 function getProfessionalRecordsColumnWidths(reportType, columns=[]) {
-  const columnCount = Math.max(safeArray(columns).length, 1);
-  const defaultWidth = `${Math.max(5, Math.floor(100 / columnCount))}%`;
+  const safeColumns = safeArray(columns);
+  const columnCount = Math.max(safeColumns.length, 1);
+  const defaultWidth = `${(100 / columnCount).toFixed(2)}%`;
+  if (reportType === 'fees-statement') {
+    const selected = {
+      'Student Name': '18%',
+      'Class': '12%',
+      'Initial Fees': '9.66%',
+      'Credit Used': '9.66%',
+      'Net Due': '9.66%',
+      'Total Paid': '9.66%',
+      'Outstanding': '9.66%',
+      'Credit Balance': '9.70%',
+      'Statement': '12%'
+    };
+    return safeColumns.map(col => selected[col] || defaultWidth);
+  }
+  if (reportType === 'student-records') {
+    const hasRelationship = safeColumns.includes('Relationship');
+    const selected = hasRelationship ? {
+      'Student No': '8.6%',
+      'Full Name': '16.5%',
+      'Assigned Class': '11.2%',
+      'Gender': '5.2%',
+      'Date of Birth': '8.5%',
+      'Parent Full Name': '16.5%',
+      'Parent Contact': '10%',
+      'Relationship': '6.3%',
+      'Promotion Status': '11.2%',
+      'Account': '6%'
+    } : {
+      'Student No': '9%',
+      'Full Name': '18.5%',
+      'Assigned Class': '12.5%',
+      'Gender': '5.8%',
+      'Date of Birth': '9%',
+      'Parent Full Name': '18%',
+      'Parent Contact': '11.5%',
+      'Promotion Status': '9.7%',
+      'Account': '6%'
+    };
+    return safeColumns.map(col => selected[col] || defaultWidth);
+  }
   const widths = {
-    'fees-statement': {
-      'Student Name': '16%', 'Class': '12%', 'Initial Fees': '10%', 'Credit Used': '10%', 'Net Due': '9%',
-      'Total Paid': '9%', 'Outstanding': '10%', 'Credit Balance': '10%', 'Statement': '14%'
-    },
-    'student-records': {
-      'Student No': '9%', 'Full Name': '15%', 'Assigned Class': '13%', 'Gender': '6%', 'Date of Birth': '9%',
-      'Parent Full Name': '16%', 'Parent Contact': '10%', 'Relationship': '7%', 'Promotion Status': '10%', 'Account': '5%'
-    },
     'salary-payment': {
-      'Teacher': '11%', 'Staff Number': '6%', 'Payroll Number': '7%', 'Salary Grade': '5%', 'Month': '7%',
-      'Gross Salary': '7%', 'Tax Deduction': '6%', 'SSNIT Deduction': '6%', 'School Loan Deduction': '7%',
-      'Other Deduction': '6%', 'Total Deductions': '7%', 'Final Net Pay': '7%', 'Payment Status': '5%',
-      'Paid Date': '7%', 'Payment Method': '7%', 'Notes': '7%'
+      'Teacher': '12%', 'Staff Number': '6.5%', 'Payroll Number': '7%', 'Salary Grade': '4.5%', 'Month': '6.2%',
+      'Gross Salary': '6.2%', 'Tax Deduction': '5.4%', 'SSNIT Deduction': '5.4%', 'School Loan Deduction': '5.8%',
+      'Other Deduction': '5.2%', 'Total Deductions': '6%', 'Final Net Pay': '6.3%', 'Payment Status': '5.2%',
+      'Paid Date': '5.8%', 'Payment Method': '5.8%', 'Notes': '6.7%',
+      'Tax': '6.5%', 'SSNIT': '7%', 'Loan': '7%', 'Other': '6.5%', 'Net Paid': '8.5%',
+      'Status': '7%', 'Method': '8%'
     }
   };
   const selected = widths[reportType] || {};
-  return safeArray(columns).map(col => selected[col] || defaultWidth);
+  return safeColumns.map(col => selected[col] || defaultWidth);
 }
+
 function buildProfessionalRecordsColgroupHtml(reportType, columns=[]) {
   return `<colgroup>${getProfessionalRecordsColumnWidths(reportType, columns).map(width => `<col style="width:${escapePrintHtml(width)};" />`).join('')}</colgroup>`;
 }
@@ -1113,12 +1149,43 @@ function buildRecordsPrintHtml({ school, title, subtitle='', columns=[], rows=[]
   const safeColumns = safeArray(columns);
   const safeRows = safeArray(rows);
   const reportType = getProfessionalRecordsReportType(title);
+  const shouldRepeatReportHead = reportType === 'fees-statement' || reportType === 'student-records' || reportType === 'salary-payment';
   const headerHtml = buildSchoolIdentityHeaderHtml(school, title, subtitle);
-  const tableHead = safeColumns.map(col => `<th>${escapePrintHtml(col)}</th>`).join('');
+  const cellClassForColumn = col => {
+    const key = String(col || '').toLowerCase();
+    if (/(fee|paid|outstanding|credit|salary|tax|ssnit|loan|deduction|net|gross|amount|balance|due|other)/.test(key)) return 'amount-cell';
+    if (/(status|statement|account|gender|date|month|method|class|relationship|number|no)/.test(key)) return 'center-cell';
+    return 'text-cell';
+  };
+  const labelAliases = reportType === 'student-records' ? {
+    'Assigned Class': 'Class',
+    'Date of Birth': 'DOB',
+    'Parent Full Name': 'Parent Name',
+    'Promotion Status': 'Promotion',
+    'Account': 'Acct'
+  } : reportType === 'fees-statement' ? {
+    'Credit Balance': 'Credit Bal.'
+  } : reportType === 'salary-payment' ? {
+    'Staff Number': 'Staff No',
+    'Payroll Number': 'Payroll No',
+    'Salary Grade': 'Grade',
+    'Gross Salary': 'Gross',
+    'Tax Deduction': 'Tax',
+    'SSNIT Deduction': 'SSNIT',
+    'School Loan Deduction': 'School Loan',
+    'Other Deduction': 'Other',
+    'Total Deductions': 'Deductions',
+    'Final Net Pay': 'Net Pay',
+    'Payment Status': 'Status',
+    'Paid Date': 'Date Paid',
+    'Payment Method': 'Method'
+  } : {};
+  const tableHead = safeColumns.map(col => `<th class="${cellClassForColumn(col)}">${escapePrintHtml(labelAliases[col] || col)}</th>`).join('');
   const tableRows = safeRows.length
-    ? safeRows.map(row => `<tr>${safeColumns.map(col => `<td>${escapePrintHtml(row?.[col] ?? '')}</td>`).join('')}</tr>`).join('')
+    ? safeRows.map(row => `<tr>${safeColumns.map(col => `<td class="${cellClassForColumn(col)}">${escapePrintHtml(row?.[col] ?? '')}</td>`).join('')}</tr>`).join('')
     : `<tr><td colspan="${Math.max(safeColumns.length, 1)}">No records available.</td></tr>`;
   const colgroupHtml = buildProfessionalRecordsColgroupHtml(reportType, safeColumns);
+  const repeatingHeaderRow = shouldRepeatReportHead ? `<tr class="professional-letterhead-row"><th class="professional-letterhead-cell" colspan="${Math.max(safeColumns.length, 1)}">${headerHtml}</th></tr>` : '';
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -1126,55 +1193,222 @@ function buildRecordsPrintHtml({ school, title, subtitle='', columns=[], rows=[]
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>${escapePrintHtml(title)}</title>
 <style>
-  @page { size: A4 landscape; margin: 7mm; }
-  * { box-sizing: border-box; font-family: Arial, sans-serif; }
-  html, body { margin: 0; padding: 0; background: #ffffff; color: #0f172a; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  .page { width: 283mm; min-height: 196mm; margin: 0 auto; background: white; padding: 7mm 6.5mm 6mm; overflow: visible; }
-  .report-head { border: 2px solid #0f766e; border-radius: 14px; padding: 8px 12px; background: linear-gradient(135deg,#ecfeff,#f0fdf4); margin-bottom: 7px; }
-  .report-head-top { display:flex; align-items:center; justify-content:space-between; gap:10px; }
-  .report-school-center { flex:1; text-align:center; min-width:0; }
-  .report-school-name { font-size: 22px; line-height: 1.08; font-weight: 900; color:#115e59; letter-spacing:.25px; }
-  .report-school-sub { font-size: 11px; line-height: 1.15; font-weight:700; color:#334155; margin-top:2px; }
-  .report-title { margin-top: 7px; text-align:center; font-size: 17px; line-height: 1.08; font-weight:900; color:#1e3a8a; text-transform:uppercase; }
-  .report-title-sub { margin-top: 4px; text-align:center; font-size: 10.8px; line-height: 1.15; color:#475569; font-weight:700; }
-  .table-shell { width:100%; overflow:visible; }
-  table.professional-record-table { width:100%; border-collapse:collapse; table-layout:fixed; margin-top: 6px; }
+  @page { margin: 7mm; }
+  * { box-sizing: border-box; font-family: "Times New Roman", Times, serif; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #ffffff;
+    color: #0f172a;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .page {
+    width: 100%;
+    margin: 0 auto;
+    background: #ffffff;
+    padding: 5mm;
+    overflow: visible;
+  }
+  .report-head {
+    border: 1.3px solid #0f766e;
+    border-radius: 8px;
+    padding: 4px 6px;
+    background: linear-gradient(135deg,#ecfeff,#f0fdf4);
+    margin: 0 0 2px 0;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  .report-head-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 7px;
+  }
+  .report-head img,
+  .report-head .report-logo-fallback {
+    width: 42px !important;
+    height: 42px !important;
+    border-radius: 9px !important;
+    flex: 0 0 auto;
+  }
+  .report-school-center { flex: 1; text-align: center; min-width: 0; }
+  .report-school-name {
+    font-size: 18px;
+    line-height: .98;
+    font-weight: 900;
+    color: #115e59;
+    letter-spacing: .15px;
+    white-space: normal;
+  }
+  .report-school-sub {
+    font-size: 10.5px;
+    line-height: 1;
+    font-weight: 700;
+    color: #334155;
+    margin-top: 1px;
+  }
+  .report-title {
+    margin-top: 2px;
+    text-align: center;
+    font-size: 14px;
+    line-height: .98;
+    font-weight: 900;
+    color: #1e3a8a;
+    text-transform: uppercase;
+  }
+  .report-title-sub {
+    margin-top: 1px;
+    text-align: center;
+    font-size: 10.5px;
+    line-height: 1;
+    color: #475569;
+    font-weight: 700;
+  }
+  .table-shell { width: 100%; overflow: visible; margin-top: 0; }
+  table.professional-record-table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+    margin-top: 2px;
+    page-break-inside: auto;
+    break-inside: auto;
+    border: .9px solid #334155;
+  }
+  table.professional-record-table thead { display: table-header-group; }
+  table.professional-record-table tfoot { display: table-footer-group; }
+  table.professional-record-table .professional-letterhead-cell {
+    padding: 0 0 2px 0 !important;
+    border: 0 !important;
+    background: #ffffff !important;
+  }
+  table.professional-record-table .professional-letterhead-row,
+  table.professional-record-table .professional-letterhead-cell {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
   table.professional-record-table th,
-  table.professional-record-table td { border:1px solid #64748b; padding:3px 4px; font-size:11px; line-height:1.12; vertical-align:middle; white-space:normal; overflow-wrap:anywhere; word-break:normal; hyphens:auto; }
-  table.professional-record-table th { background:#dbeafe; color:#1e3a8a; font-weight:800; text-align:center; }
-  table.professional-record-table td { text-align:left; color:#0f172a; }
-  table.professional-record-table tbody tr { min-height: 18px; break-inside: avoid; page-break-inside: avoid; }
-  table.professional-record-table tbody tr:nth-child(even) { background:#f8fafc; }
+  table.professional-record-table td {
+    border: .8px solid #64748b;
+    padding: 1.2px 1.7px;
+    font-size: 12px;
+    line-height: 1.02;
+    vertical-align: top;
+    white-space: normal;
+    overflow-wrap: break-word;
+    word-break: normal;
+    hyphens: auto;
+  }
+  table.professional-record-table th {
+    background: #dbeafe;
+    color: #172554;
+    font-weight: 900;
+    text-align: center;
+    vertical-align: middle;
+    padding-top: 1.4px;
+    padding-bottom: 1.4px;
+  }
+  table.professional-record-table td {
+    text-align: left;
+    color: #020617;
+    height: auto;
+    font-weight: 600;
+  }
+  table.professional-record-table th.amount-cell,
+  table.professional-record-table td.amount-cell { text-align: right; font-variant-numeric: tabular-nums; }
+  table.professional-record-table th.center-cell,
+  table.professional-record-table td.center-cell { text-align: center; }
+  table.professional-record-table tbody tr {
+    height: auto;
+    min-height: 0;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  table.professional-record-table tbody tr:nth-child(even) { background: #f8fafc; }
+  body.fees-statement table.professional-record-table th,
+  body.fees-statement table.professional-record-table td,
+  body.student-records table.professional-record-table th,
+  body.student-records table.professional-record-table td {
+    padding: 1px 1.45px;
+    line-height: 1;
+  }
+  body.student-records table.professional-record-table td:nth-child(2),
+  body.student-records table.professional-record-table td:nth-child(6),
+  body.fees-statement table.professional-record-table td:nth-child(1) { text-align: left; }
   body.salary-payment table.professional-record-table th,
-  body.salary-payment table.professional-record-table td { font-size:11px; padding:2.8px 3px; line-height:1.08; }
+  body.salary-payment table.professional-record-table td {
+    font-size: 12px;
+    padding: 1px 1.25px;
+    line-height: .98;
+  }
+  body.salary-payment table.professional-record-table th {
+    font-size: 11.4px;
+    letter-spacing: .02px;
+    padding-top: 1px;
+    padding-bottom: 1px;
+  }
   body.salary-payment table.professional-record-table td:nth-child(n+6):nth-child(-n+12),
-  body.fees-statement table.professional-record-table td:nth-child(n+3):nth-child(-n+8) { text-align:right; font-variant-numeric: tabular-nums; }
+  body.fees-statement table.professional-record-table td:nth-child(n+3):nth-child(-n+8) {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  body.salary-payment table.professional-record-table td:nth-child(1),
+  body.salary-payment table.professional-record-table td:nth-child(16) {
+    text-align: left;
+  }
+  body.salary-payment table.professional-record-table td:nth-child(2),
+  body.salary-payment table.professional-record-table td:nth-child(3),
+  body.salary-payment table.professional-record-table td:nth-child(4),
+  body.salary-payment table.professional-record-table td:nth-child(5),
   body.salary-payment table.professional-record-table td:nth-child(13),
+  body.salary-payment table.professional-record-table td:nth-child(14),
+  body.salary-payment table.professional-record-table td:nth-child(15),
   body.student-records table.professional-record-table td:last-child,
-  body.fees-statement table.professional-record-table td:last-child { text-align:center; font-weight:700; }
+  body.fees-statement table.professional-record-table td:last-child { text-align: center; font-weight: 700; }
   body.student-records table.professional-record-table td:nth-child(1),
   body.student-records table.professional-record-table td:nth-child(4),
   body.student-records table.professional-record-table td:nth-child(5),
-  body.student-records table.professional-record-table td:last-child { text-align:center; }
-  .footnote { margin-top: 6px; text-align:right; font-size: 10px; color:#64748b; font-weight:700; }
+  body.student-records table.professional-record-table td:nth-child(8),
+  body.student-records table.professional-record-table td:nth-child(9),
+  body.student-records table.professional-record-table td:last-child { text-align: center; }
+  .footnote {
+    margin-top: 2px;
+    text-align: right;
+    font-size: 10px;
+    line-height: 1;
+    color: #64748b;
+    font-weight: 700;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
   @media print {
-    html, body { width: 100%; background:white; }
-    .page { width:auto; min-height:auto; margin:0; padding:0; }
-    .report-head { margin-bottom: 6px; }
-    table.professional-record-table { margin-top: 5px; }
+    html, body { width: 100%; background: #ffffff; }
+    .page { width: auto; max-width: none; min-height: auto; margin: 0; padding: 0; overflow: visible; }
+    .report-head { margin-bottom: 1px; padding: 2.5px 4.5px; }
+    .report-head img,
+    .report-head .report-logo-fallback { width: 38px !important; height: 38px !important; }
+    .report-school-name { font-size: 17px; }
+    .report-title { font-size: 13.5px; }
+    table.professional-record-table { margin-top: 1px; }
+    table.professional-record-table th,
+    table.professional-record-table td { padding: .9px 1.3px; }
+    body.salary-payment table.professional-record-table th,
+    body.salary-payment table.professional-record-table td {
+      padding: .75px 1.05px;
+      line-height: .96;
+    }
+    body.salary-payment table.professional-record-table th { font-size: 11.2px; }
   }
-  @media screen and (max-width: 900px) {
-    .page { width: 100%; min-height: auto; padding: 10px; }
-  }
+  @media screen and (max-width: 900px) { .page { width: 100%; min-height: auto; padding: 10px; } }
 </style>
 </head>
 <body class="${escapePrintHtml(reportType)}">
   <div class="page">
-    ${headerHtml}
+    ${shouldRepeatReportHead ? '' : headerHtml}
     <div class="table-shell">
       <table class="professional-record-table">
         ${colgroupHtml}
-        <thead><tr>${tableHead}</tr></thead>
+        <thead>${repeatingHeaderRow}<tr>${tableHead}</tr></thead>
         <tbody>${tableRows}</tbody>
       </table>
     </div>
@@ -1186,9 +1420,6 @@ function buildRecordsPrintHtml({ school, title, subtitle='', columns=[], rows=[]
 function buildTeacherRecordsPrintHtml({ school, title, subtitle='', columns=[], rows=[] }) {
   const safeColumns = safeArray(columns);
   const safeRows = safeArray(rows);
-  const totalPages = 2;
-  const rowsPerPage = Math.max(1, Math.ceil(safeRows.length / totalPages));
-  const pages = [safeRows.slice(0, rowsPerPage), safeRows.slice(rowsPerPage)];
   const labelAliases = {
     'Assigned Subjects': 'Subjects',
     'Assigned Classes': 'Classes',
@@ -1218,22 +1449,19 @@ function buildTeacherRecordsPrintHtml({ school, title, subtitle='', columns=[], 
     if (key.includes('account')) return 'col-account';
     return 'col-standard';
   };
-  const renderHeader = pageNumber => {
-    const identity = getSchoolPrintIdentity(school);
-    const safeLogoUrl = String(identity.logoUrl || '').trim();
-    const logoHtml = safeLogoUrl
-      ? `<img class="school-logo" src="${safeLogoUrl}" onerror="this.style.visibility='hidden'" />`
-      : `<div class="school-logo school-logo-fallback">SMS</div>`;
-    return `<div class="teacher-report-head"><div class="teacher-report-head-top">${logoHtml}<div class="teacher-report-center"><div class="teacher-school-name">${escapePrintHtml(identity.name)}</div><div class="teacher-school-sub">${escapePrintHtml(identity.addressLine || 'School record printout')}</div><div class="teacher-school-sub">${escapePrintHtml(identity.contact || '')}</div></div>${logoHtml}</div><div class="teacher-report-title">${escapePrintHtml(title)}</div><div class="teacher-report-meta"><span>${escapePrintHtml(subtitle || `Total Teachers: ${safeRows.length}`)}</span><span>Page ${pageNumber} of ${totalPages}</span></div></div>`;
-  };
-  const renderTable = pageRows => {
-    const tableHead = safeColumns.map(col => `<th class="${classForColumn(col)}">${escapePrintHtml(labelAliases[col] || col)}</th>`).join('');
-    const tableRows = pageRows.length
-      ? pageRows.map(row => `<tr>${safeColumns.map(col => `<td class="${classForColumn(col)}"><span>${escapePrintHtml(row?.[col] ?? '')}</span></td>`).join('')}</tr>`).join('')
-      : `<tr class="empty-row"><td colspan="${Math.max(safeColumns.length, 1)}">No additional teacher records on this page.</td></tr>`;
-    return `<table class="teacher-record-table"><thead><tr>${tableHead}</tr></thead><tbody>${tableRows}</tbody></table>`;
-  };
-  const pageHtml = pages.map((pageRows, idx) => `<section class="teacher-print-page">${renderHeader(idx + 1)}<div class="teacher-table-wrap">${renderTable(pageRows)}</div><div class="teacher-print-footer"><span>Generated on ${escapePrintHtml(new Date().toLocaleString())}</span><span>Professional teacher records report</span></div></section>`).join('');
+  const identity = getSchoolPrintIdentity(school);
+  const safeLogoUrl = String(identity.logoUrl || '').trim();
+  const logoHtml = safeLogoUrl
+    ? `<img class="school-logo" src="${safeLogoUrl}" onerror="this.style.visibility='hidden'" />`
+    : `<div class="school-logo school-logo-fallback">SMS</div>`;
+  const headerHtml = `<div class="teacher-report-head"><div class="teacher-report-head-top">${logoHtml}<div class="teacher-report-center"><div class="teacher-school-name">${escapePrintHtml(identity.name)}</div><div class="teacher-school-sub">${escapePrintHtml(identity.addressLine || 'School record printout')}</div><div class="teacher-school-sub">${escapePrintHtml(identity.contact || '')}</div></div>${logoHtml}</div><div class="teacher-report-title">${escapePrintHtml(title)}</div><div class="teacher-report-meta">${escapePrintHtml(subtitle || `Total Teachers: ${safeRows.length}`)}</div></div>`;
+  const tableHead = safeColumns.map(col => `<th class="${classForColumn(col)}">${escapePrintHtml(labelAliases[col] || col)}</th>`).join('');
+  const colgroupHtml = safeColumns.map(col => `<col class="${classForColumn(col)}" />`).join('');
+  const repeatingHeaderRow = `<tr class="teacher-letterhead-row"><th class="teacher-letterhead-cell" colspan="${Math.max(safeColumns.length, 1)}">${headerHtml}</th></tr>`;
+  const tableRows = safeRows.length
+    ? safeRows.map(row => `<tr>${safeColumns.map(col => `<td class="${classForColumn(col)}">${escapePrintHtml(row?.[col] ?? '')}</td>`).join('')}</tr>`).join('')
+    : `<tr class="empty-row"><td colspan="${Math.max(safeColumns.length, 1)}">No teacher records available.</td></tr>`;
+
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -1241,52 +1469,197 @@ function buildTeacherRecordsPrintHtml({ school, title, subtitle='', columns=[], 
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>${escapePrintHtml(title)}</title>
 <style>
-  @page { size: A4 landscape; margin: 8mm; }
-  * { box-sizing: border-box; font-family: Arial, Helvetica, sans-serif; }
-  html, body { margin: 0; padding: 0; background: #ffffff; color: #0f172a; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  .teacher-print-page { width: 277mm; height: 190mm; margin: 0 auto; padding: 4.8mm 5mm 5mm; background: #ffffff; overflow: hidden; page-break-after: always; break-after: page; }
-  .teacher-print-page:last-child { page-break-after: auto; break-after: auto; }
-  .teacher-report-head { height: 28mm; border: 2px solid #0f766e; border-radius: 13px; padding: 4mm 5mm 3mm; background: linear-gradient(135deg,#ecfeff 0%,#f0fdf4 100%); }
-  .teacher-report-head-top { display: flex; align-items: center; justify-content: space-between; gap: 8mm; }
+  @page { margin: 7mm; }
+  * { box-sizing: border-box; font-family: "Times New Roman", Times, serif; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #ffffff;
+    color: #0f172a;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .teacher-print-page {
+    width: 100%;
+    margin: 0 auto;
+    padding: 5mm;
+    background: #ffffff;
+    overflow: visible;
+  }
+  .teacher-report-head {
+    border: 1.2px solid #0f766e;
+    border-radius: 7px;
+    padding: 3px 5px;
+    background: linear-gradient(135deg,#ecfeff 0%,#f0fdf4 100%);
+    margin-bottom: 1px;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  .teacher-report-head-top { display: flex; align-items: center; justify-content: space-between; gap: 7px; }
   .teacher-report-center { flex: 1; text-align: center; min-width: 0; }
-  .school-logo { width: 14mm; height: 14mm; object-fit: cover; border: 1.8px solid #0f766e; border-radius: 10px; background: #ffffff; padding: 1px; }
+  .school-logo {
+    width: 36px;
+    height: 36px;
+    object-fit: cover;
+    border: 1.2px solid #0f766e;
+    border-radius: 8px;
+    background: #ffffff;
+    padding: 1px;
+    flex: 0 0 auto;
+  }
   .school-logo-fallback { display: flex; align-items: center; justify-content: center; color:#115e59; font-weight:900; background:#ccfbf1; }
-  .teacher-school-name { font-size: 19px; line-height: 1.05; font-weight: 900; color: #115e59; letter-spacing: .25px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .teacher-school-sub { margin-top: 2px; font-size: 10.5px; line-height: 1.15; font-weight: 700; color: #334155; }
-  .teacher-report-title { margin-top: 4px; text-align: center; font-size: 15px; line-height: 1; font-weight: 900; color: #1e3a8a; letter-spacing: .45px; text-transform: uppercase; }
-  .teacher-report-meta { margin-top: 4px; display: flex; justify-content: center; gap: 12mm; font-size: 9.5px; font-weight: 800; color: #334155; }
-  .teacher-table-wrap { height: 148mm; margin-top: 3mm; overflow: hidden; }
-  .teacher-record-table { width: 100%; border-collapse: collapse; table-layout: fixed; border: 1.2px solid #334155; }
-  .teacher-record-table th, .teacher-record-table td { border: 1px solid #64748b; text-align: left; vertical-align: top; white-space: normal; overflow: hidden; }
-  .teacher-record-table th { background: #dbeafe; color: #172554; font-size: 7px; line-height: 1.05; font-weight: 900; padding: 2.6px 2.8px; }
-  .teacher-record-table td { height: 10.8mm; max-height: 10.8mm; font-size: 6.4px; line-height: 1.1; font-weight: 600; padding: 2px 2.4px; color: #020617; }
-  .teacher-record-table td span { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
-  .teacher-record-table td.col-subjects span { -webkit-line-clamp: 4; }
-  .teacher-record-table td.col-contact span, .teacher-record-table td.col-specialty span { -webkit-line-clamp: 3; }
+  .teacher-school-name {
+    font-size: 17px;
+    line-height: .98;
+    font-weight: 900;
+    color: #115e59;
+    letter-spacing: .12px;
+    white-space: normal;
+  }
+  .teacher-school-sub { margin-top: 1px; font-size: 11px; line-height: 1.02; font-weight: 700; color: #334155; }
+  .teacher-report-title {
+    margin-top: 2px;
+    text-align: center;
+    font-size: 13.5px;
+    line-height: .98;
+    font-weight: 900;
+    color: #1e3a8a;
+    letter-spacing: .18px;
+    text-transform: uppercase;
+  }
+  .teacher-report-meta { margin-top: 1px; text-align: center; font-size: 10px; line-height: 1; font-weight: 800; color: #334155; }
+  .teacher-table-wrap { width: 100%; margin-top: 1px; overflow: visible; }
+  .teacher-record-table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+    border: 1px solid #334155;
+    page-break-inside: auto;
+    break-inside: auto;
+  }
+  .teacher-record-table thead { display: table-header-group; }
+  .teacher-record-table .teacher-letterhead-cell {
+    padding: 0 0 2px 0 !important;
+    border: 0 !important;
+    background: #ffffff !important;
+  }
+  .teacher-record-table .teacher-letterhead-row,
+  .teacher-record-table .teacher-letterhead-cell {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  .teacher-record-table .teacher-letterhead-cell .teacher-report-head {
+    margin-bottom: 2px;
+  }
+  .teacher-record-table th,
+  .teacher-record-table td {
+    border: .8px solid #64748b;
+    text-align: left;
+    vertical-align: top;
+    white-space: normal;
+    overflow-wrap: break-word;
+    word-break: normal;
+    hyphens: auto;
+    font-size: 8.8px;
+    line-height: 1.02;
+    padding: 1px 1.4px;
+  }
+  .teacher-record-table th {
+    background: #dbeafe;
+    color: #172554;
+    font-weight: 900;
+    text-align: center;
+    vertical-align: middle;
+    font-size: 9px;
+    line-height: 1.03;
+    padding-top: 1.2px;
+    padding-bottom: 1.2px;
+  }
+  .teacher-record-table td {
+    height: auto;
+    font-weight: 600;
+    color: #020617;
+  }
+  .teacher-record-table td.col-subjects,
+  .teacher-record-table td.col-classes,
+  .teacher-record-table td.col-specialty,
+  .teacher-record-table td.col-contact {
+    font-size: 8.4px;
+    line-height: .98;
+  }
+  .teacher-record-table td.col-staff,
+  .teacher-record-table td.col-emis,
+  .teacher-record-table td.col-ghana,
+  .teacher-record-table td.col-dob,
+  .teacher-record-table td.col-account {
+    font-size: 8.3px;
+    line-height: .98;
+  }
+  .teacher-record-table tbody tr {
+    height: auto;
+    min-height: 0;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
   .teacher-record-table tbody tr:nth-child(even) { background: #f8fafc; }
-  .teacher-record-table .empty-row td { height: 125mm; text-align:center; vertical-align:middle; font-size: 13px; color:#64748b; }
-  .col-staff { width: 5.7%; }
-  .col-name { width: 8.8%; }
-  .col-subjects { width: 19.8%; }
-  .col-classes { width: 6.3%; }
-  .col-qualification { width: 5.8%; }
-  .col-emis { width: 5.7%; }
-  .col-ghana { width: 7.4%; }
-  .col-gender { width: 4.1%; }
-  .col-dob { width: 5.2%; }
-  .col-training { width: 4.8%; }
-  .col-specialty { width: 8.3%; }
-  .col-contact { width: 11%; }
-  .col-account { width: 4.6%; }
-  .col-standard { width: auto; }
-  .teacher-print-footer { height: 4.5mm; margin-top: 2.5mm; display:flex; align-items:center; justify-content:space-between; font-size: 8.2px; font-weight: 700; color:#64748b; border-top: 1px solid #cbd5e1; padding-top: 2mm; }
+  .teacher-record-table .empty-row td { text-align:center; vertical-align:middle; font-size: 12px; color:#64748b; }
+  col.col-staff, .col-staff { width: 6.2%; }
+  col.col-name, .col-name { width: 8.7%; }
+  col.col-subjects, .col-subjects { width: 21.5%; }
+  col.col-classes, .col-classes { width: 7%; }
+  col.col-qualification, .col-qualification { width: 5.8%; }
+  col.col-emis, .col-emis { width: 5.7%; }
+  col.col-ghana, .col-ghana { width: 7.2%; }
+  col.col-gender, .col-gender { width: 4%; }
+  col.col-dob, .col-dob { width: 5.2%; }
+  col.col-training, .col-training { width: 4.8%; }
+  col.col-specialty, .col-specialty { width: 8.3%; }
+  col.col-contact, .col-contact { width: 9.8%; }
+  col.col-account, .col-account { width: 5.8%; }
+  col.col-standard, .col-standard { width: auto; }
+  .teacher-print-footer {
+    margin-top: 2px;
+    text-align: right;
+    font-size: 10px;
+    line-height: 1;
+    font-weight: 700;
+    color:#64748b;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
   @media print {
     body { background: #ffffff; }
-    .teacher-print-page { margin: 0; box-shadow: none; }
+    .teacher-print-page {
+      width: auto;
+      margin: 0;
+      padding: 0;
+      box-shadow: none;
+      overflow: visible;
+    }
+    .teacher-report-head { margin-bottom: 1px; padding: 2.5px 4.5px; }
+    .teacher-record-table th,
+    .teacher-record-table td { padding: .9px 1.25px; }
+    .teacher-record-table th { font-size: 8.8px; }
+    .teacher-record-table td { font-size: 8.6px; }
+    .teacher-record-table td.col-subjects,
+    .teacher-record-table td.col-classes,
+    .teacher-record-table td.col-specialty,
+    .teacher-record-table td.col-contact { font-size: 8.2px; line-height: .98; }
   }
 </style>
 </head>
-<body>${pageHtml}</body>
+<body>
+  <section class="teacher-print-page">
+    <div class="teacher-table-wrap">
+      <table class="teacher-record-table">
+        <colgroup>${colgroupHtml}</colgroup>
+        <thead>${repeatingHeaderRow}<tr>${tableHead}</tr></thead>
+        <tbody>${tableRows}</tbody>
+      </table>
+    </div>
+    <div class="teacher-print-footer">Generated on ${escapePrintHtml(new Date().toLocaleString())}</div>
+  </section>
+</body>
 </html>`;
 }
 
