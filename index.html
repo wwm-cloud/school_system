@@ -103,7 +103,7 @@ const supabase = hasSupabaseCreds ? window.supabase.createClient(SUPABASE_URL, S
 const offlineStore = localforage.createInstance({ name: 'school_mgmt_final_v1' });
 const FAST_UI_MODE = true;
 
-const ROLE_LABELS = { admin: 'School Admin', teacher: 'Teacher', student: 'Student', parent: 'Parent', accountant: 'Accounts Office Staff', principal: 'Principal' };
+const ROLE_LABELS = { superadmin: 'Super Admin', admin: 'School Admin', teacher: 'Teacher', student: 'Student', parent: 'Parent', accountant: 'Accounts Office Staff', principal: 'Principal' };
 const QUALIFICATIONS = ['PhD', 'MSc Degree', 'Bachelor Degree', 'HND', 'Diploma', 'SHS'];
 const GENDERS = ['Male', 'Female'];
 const TRAINING_STATUS = ['Trained', 'Non-Trained'];
@@ -114,6 +114,7 @@ const PAYMENT_METHODS = ['Cash', 'Mobile Money', 'Bank Transfer', 'Cheque'];
 const FORCE_PASSWORD_CHANGE = ['Yes', 'No'];
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
 const CHAT_MODES = {
+  superadmin: ['Platform Access', 'Licensing'],
   admin: ['Live Chat', 'Monitor Students', 'Access Control'],
   teacher: ['Live Chat', 'Monitor Students'],
   student: ['Live Chat', 'Same Class'],
@@ -209,10 +210,110 @@ function backendCompatibleSchoolThemePayload(payload) {
   };
 }
 
-const defaultSchool = { school_name: 'Wood-World Missions Int. School', address: '', contact: '', location: '', logo_url: '', theme_choice: 'emerald', header_theme_choice: 'softWhite', footer_theme_choice: 'midnight', login_background_url: '', font_choice: 'inter', principal_signature_url: '', audio_greeting_enabled: true, login_greeting_template: 'Welcome {firstName}, You may proceed.', logout_greeting_message: 'Goodbye, Nice having you on board.', failed_login_greeting_message: 'Login fails, please verify your identity carefully or contact your school IT department to ratify the issue.' };
+const defaultSchool = { school_name: 'Wood-World Missions Int. School', address: '', contact: '', location: '', logo_url: '', theme_choice: 'emerald', header_theme_choice: 'softWhite', footer_theme_choice: 'midnight', login_background_url: '', font_choice: 'inter', principal_signature_url: '', audio_greeting_enabled: true, login_greeting_template: 'Welcome {firstName}, You may proceed.', logout_greeting_message: 'Goodbye, Nice having you on board.', failed_login_greeting_message: 'Login fails, please verify your identity carefully or contact your school IT department to ratify the issue.', platform_access_locked: false, school_admin_access_locked: false, school_license_plan: '', school_license_label: 'No license issued', school_license_code: '', school_license_status: 'Not Issued', school_license_issued_at: '', school_license_activated_at: '', school_license_expires_at: '', school_license_last_checked_at: '' };
 const uid = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
 const today = () => new Date().toISOString().slice(0,10);
 const safeArray = v => Array.isArray(v) ? v : [];
+
+const SUPER_ADMIN_DEFAULT_USERNAME = 'superadmin';
+const SUPER_ADMIN_DEFAULT_PASSWORD = 'superadmin12345';
+const PLATFORM_CONTROL_STORAGE_KEY = 'school_platform_control_settings_v1';
+const LICENSE_PLAN_OPTIONS = {
+  fourMonths: { label: '4 Months License', months: 4, code: '4M' },
+  oneYear: { label: '1 Year License', months: 12, code: '1Y' },
+  twoYears: { label: '2 Years License', months: 24, code: '2Y' },
+  threeYears: { label: '3 Years License', months: 36, code: '3Y' },
+  fiveYears: { label: '5 Years License', months: 60, code: '5Y' },
+  unlimited: { label: 'Unlimited License Use', months: null, code: 'UNL' }
+};
+const PLATFORM_SETTING_KEYS = ['platform_access_locked','school_admin_access_locked','school_license_plan','school_license_label','school_license_code','school_license_status','school_license_issued_at','school_license_activated_at','school_license_expires_at','school_license_last_checked_at'];
+function boolSetting(value, fallback=false) {
+  if (typeof value === 'boolean') return value;
+  if (['true','True','TRUE','1','Yes','YES','yes','on','ON'].includes(String(value))) return true;
+  if (['false','False','FALSE','0','No','NO','no','off','OFF'].includes(String(value))) return false;
+  return fallback;
+}
+function readPlatformControlSettings() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(PLATFORM_CONTROL_STORAGE_KEY) || '{}');
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (e) { return {}; }
+}
+function rememberPlatformControlSettings(settings={}) {
+  try {
+    const picked = {};
+    PLATFORM_SETTING_KEYS.forEach(key => { picked[key] = settings?.[key] ?? defaultSchool[key] ?? ''; });
+    localStorage.setItem(PLATFORM_CONTROL_STORAGE_KEY, JSON.stringify(picked));
+  } catch (e) {}
+}
+function addMonthsToDate(startDate, months) {
+  const date = new Date(startDate || new Date());
+  const day = date.getDate();
+  date.setMonth(date.getMonth() + Number(months || 0));
+  if (date.getDate() < day) date.setDate(0);
+  return date;
+}
+function isoDateOnly(dateValue) {
+  if (!dateValue) return '';
+  const date = dateValue instanceof Date ? dateValue : new Date(dateValue);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toISOString().slice(0, 10);
+}
+function formatReadableDate(value) {
+  if (!value) return 'Not set';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+}
+function calculateLicenseExpiryDate(planKey, startDate=new Date()) {
+  const plan = LICENSE_PLAN_OPTIONS[planKey];
+  if (!plan) return '';
+  if (planKey === 'unlimited') return '';
+  return isoDateOnly(addMonthsToDate(startDate, plan.months));
+}
+function generateLicenseCode(planKey='oneYear') {
+  const plan = LICENSE_PLAN_OPTIONS[planKey] || LICENSE_PLAN_OPTIONS.oneYear;
+  const schoolPart = String(defaultSchool.school_name || 'SCHOOL').replace(/[^a-zA-Z0-9]/g, '').slice(0, 4).toUpperCase() || 'SCHL';
+  const randomPart = Math.random().toString(36).slice(2, 8).toUpperCase();
+  const timePart = Date.now().toString(36).slice(-5).toUpperCase();
+  return `LIC-${plan.code}-${schoolPart}-${timePart}-${randomPart}`;
+}
+function getLicenseState(settings={}) {
+  const planKey = settings.school_license_plan || '';
+  const plan = LICENSE_PLAN_OPTIONS[planKey] || null;
+  const code = String(settings.school_license_code || '').trim();
+  const status = String(settings.school_license_status || (code ? 'Issued' : 'Not Issued'));
+  const expiresAt = String(settings.school_license_expires_at || '').trim();
+  const unlimited = planKey === 'unlimited';
+  const expiresDate = expiresAt ? new Date(`${expiresAt}T23:59:59`) : null;
+  const expired = !!(code && !unlimited && expiresDate && !Number.isNaN(expiresDate.getTime()) && expiresDate < new Date());
+  const active = !!(code && status === 'Active' && (unlimited || !expired));
+  return {
+    planKey,
+    planLabel: settings.school_license_label || plan?.label || (code ? 'Custom License' : 'No license issued'),
+    code,
+    status: expired ? 'Expired' : status,
+    issuedAt: settings.school_license_issued_at || '',
+    activatedAt: settings.school_license_activated_at || '',
+    expiresAt,
+    unlimited,
+    expired,
+    active,
+    isIssued: !!code
+  };
+}
+function isSchoolAdminAccessRestricted(settings={}) {
+  const license = getLicenseState(settings);
+  if (boolSetting(settings.school_admin_access_locked, false)) return true;
+  if (license.isIssued && !license.active) return true;
+  return false;
+}
+function getSuperAdminCredentials(settings={}) {
+  return {
+    username: String(settings.super_admin_username || SUPER_ADMIN_DEFAULT_USERNAME).trim() || SUPER_ADMIN_DEFAULT_USERNAME,
+    password: String(settings.super_admin_password || SUPER_ADMIN_DEFAULT_PASSWORD)
+  };
+}
 
 const fullClassName = cls => cls ? [cls.name, cls.section].filter(Boolean).join(' ') : '';
 function extractTrailingSequence(value) {
@@ -361,6 +462,7 @@ function normalizeCrossModuleConsistency(raw={}) {
     ...raw,
     schoolSettings: {
       ...defaultSchool,
+      ...readPlatformControlSettings(),
       ...(raw.schoolSettings || {}),
       theme_choice: resolveThemeChoiceForDisplay(raw.schoolSettings?.theme_choice, THEME_STORAGE_KEY, defaultSchool.theme_choice, normalizeThemeChoice, BACKEND_SAFE_THEME_CHOICES),
       header_theme_choice: resolveThemeChoiceForDisplay(raw.schoolSettings?.header_theme_choice, HEADER_THEME_STORAGE_KEY, defaultSchool.header_theme_choice, normalizeHeaderThemeChoice, BACKEND_SAFE_HEADER_THEME_CHOICES),
@@ -369,7 +471,17 @@ function normalizeCrossModuleConsistency(raw={}) {
       audio_greeting_enabled: ![false, 'false', 'False', 0, '0', 'No', 'NO', 'off', 'OFF'].includes(raw.schoolSettings?.audio_greeting_enabled),
       login_greeting_template: String(raw.schoolSettings?.login_greeting_template || defaultSchool.login_greeting_template),
       logout_greeting_message: String(raw.schoolSettings?.logout_greeting_message || defaultSchool.logout_greeting_message),
-      failed_login_greeting_message: String(raw.schoolSettings?.failed_login_greeting_message || defaultSchool.failed_login_greeting_message)
+      failed_login_greeting_message: String(raw.schoolSettings?.failed_login_greeting_message || defaultSchool.failed_login_greeting_message),
+      platform_access_locked: boolSetting(raw.schoolSettings?.platform_access_locked ?? readPlatformControlSettings().platform_access_locked, defaultSchool.platform_access_locked),
+      school_admin_access_locked: boolSetting(raw.schoolSettings?.school_admin_access_locked ?? readPlatformControlSettings().school_admin_access_locked, defaultSchool.school_admin_access_locked),
+      school_license_plan: String(raw.schoolSettings?.school_license_plan ?? readPlatformControlSettings().school_license_plan ?? ''),
+      school_license_label: String(raw.schoolSettings?.school_license_label ?? readPlatformControlSettings().school_license_label ?? defaultSchool.school_license_label),
+      school_license_code: String(raw.schoolSettings?.school_license_code ?? readPlatformControlSettings().school_license_code ?? ''),
+      school_license_status: String(raw.schoolSettings?.school_license_status ?? readPlatformControlSettings().school_license_status ?? defaultSchool.school_license_status),
+      school_license_issued_at: String(raw.schoolSettings?.school_license_issued_at ?? readPlatformControlSettings().school_license_issued_at ?? ''),
+      school_license_activated_at: String(raw.schoolSettings?.school_license_activated_at ?? readPlatformControlSettings().school_license_activated_at ?? ''),
+      school_license_expires_at: String(raw.schoolSettings?.school_license_expires_at ?? readPlatformControlSettings().school_license_expires_at ?? ''),
+      school_license_last_checked_at: String(raw.schoolSettings?.school_license_last_checked_at ?? readPlatformControlSettings().school_license_last_checked_at ?? '')
     },
     teachers,
     students,
@@ -2482,10 +2594,25 @@ function usePersistentSchoolData() {
       audio_greeting_enabled: ![false, 'false', 'False', 0, '0', 'No', 'NO', 'off', 'OFF'].includes(nextVal.audio_greeting_enabled),
       login_greeting_template: String(nextVal.login_greeting_template || defaultSchool.login_greeting_template),
       logout_greeting_message: String(nextVal.logout_greeting_message || defaultSchool.logout_greeting_message),
-      failed_login_greeting_message: String(nextVal.failed_login_greeting_message || defaultSchool.failed_login_greeting_message)
+      failed_login_greeting_message: String(nextVal.failed_login_greeting_message || defaultSchool.failed_login_greeting_message),
+      platform_access_locked: boolSetting(nextVal.platform_access_locked, false),
+      school_admin_access_locked: boolSetting(nextVal.school_admin_access_locked, false),
+      school_license_plan: String(nextVal.school_license_plan || ''),
+      school_license_label: String(nextVal.school_license_label || defaultSchool.school_license_label),
+      school_license_code: String(nextVal.school_license_code || ''),
+      school_license_status: String(nextVal.school_license_status || defaultSchool.school_license_status),
+      school_license_issued_at: nextVal.school_license_issued_at || null,
+      school_license_activated_at: nextVal.school_license_activated_at || null,
+      school_license_expires_at: nextVal.school_license_expires_at || null,
+      school_license_last_checked_at: nextVal.school_license_last_checked_at || null
+    };
+    const stripPlatformPayloadFields = obj => {
+      const copy = { ...obj };
+      PLATFORM_SETTING_KEYS.forEach(key => { delete copy[key]; });
+      return copy;
     };
     let { error } = await supabase.from('school_settings').update(payload).eq('id', 1);
-    if (error && /header_theme_choice|footer_theme_choice|login_background_url|font_choice/i.test(String(error.message || '')) && /column/i.test(String(error.message || ''))) {
+    if (error && /header_theme_choice|footer_theme_choice|login_background_url|font_choice|platform_access_locked|school_admin_access_locked|school_license_plan|school_license_label|school_license_code|school_license_status|school_license_issued_at|school_license_activated_at|school_license_expires_at|school_license_last_checked_at/i.test(String(error.message || '')) && /column/i.test(String(error.message || ''))) {
       const fallbackPayload = { ...payload };
       delete fallbackPayload.header_theme_choice;
       delete fallbackPayload.footer_theme_choice;
@@ -2495,6 +2622,7 @@ function usePersistentSchoolData() {
       delete fallbackPayload.login_greeting_template;
       delete fallbackPayload.logout_greeting_message;
       delete fallbackPayload.failed_login_greeting_message;
+      PLATFORM_SETTING_KEYS.forEach(key => { delete fallbackPayload[key]; });
       const fallback = await supabase.from('school_settings').update(fallbackPayload).eq('id', 1);
       error = fallback.error;
     }
@@ -2502,7 +2630,7 @@ function usePersistentSchoolData() {
       rememberThemeSelections(payload.theme_choice, payload.header_theme_choice, payload.footer_theme_choice);
       const compatiblePayload = backendCompatibleSchoolThemePayload(payload);
       const compatibleRetry = await supabase.from('school_settings').update(compatiblePayload).eq('id', 1);
-      if (compatibleRetry.error && /header_theme_choice|footer_theme_choice|login_background_url|font_choice/i.test(String(compatibleRetry.error.message || '')) && /column/i.test(String(compatibleRetry.error.message || ''))) {
+      if (compatibleRetry.error && /header_theme_choice|footer_theme_choice|login_background_url|font_choice|platform_access_locked|school_admin_access_locked|school_license_plan|school_license_label|school_license_code|school_license_status|school_license_issued_at|school_license_activated_at|school_license_expires_at|school_license_last_checked_at/i.test(String(compatibleRetry.error.message || '')) && /column/i.test(String(compatibleRetry.error.message || ''))) {
         const compatibleFallbackPayload = { ...compatiblePayload };
         delete compatibleFallbackPayload.header_theme_choice;
         delete compatibleFallbackPayload.footer_theme_choice;
@@ -2512,12 +2640,22 @@ function usePersistentSchoolData() {
         delete compatibleFallbackPayload.login_greeting_template;
         delete compatibleFallbackPayload.logout_greeting_message;
         delete compatibleFallbackPayload.failed_login_greeting_message;
+        PLATFORM_SETTING_KEYS.forEach(key => { delete compatibleFallbackPayload[key]; });
         const compatibleFallback = await supabase.from('school_settings').update(compatibleFallbackPayload).eq('id', 1);
         if (compatibleFallback.error) throw compatibleFallback.error;
       } else if (compatibleRetry.error) {
         throw compatibleRetry.error;
       }
       return { themeFallback: true };
+    }
+    if (error && /platform_access_locked|school_admin_access_locked|school_license_plan|school_license_label|school_license_code|school_license_status|school_license_issued_at|school_license_activated_at|school_license_expires_at|school_license_last_checked_at/i.test(String(error.message || ''))) {
+      rememberPlatformControlSettings(nextVal);
+      const fallback = await supabase.from('school_settings').update(stripPlatformPayloadFields(payload)).eq('id', 1);
+      if (fallback.error && /login_background_url|font_choice|audio_greeting_enabled|login_greeting_template|logout_greeting_message|failed_login_greeting_message/i.test(String(fallback.error.message || ''))) {
+        throw new Error('The backend personalization columns are missing. Run the latest personalization SQL update, then save again.');
+      }
+      if (fallback.error) throw fallback.error;
+      return { platformFallback: true };
     }
     if (error && /login_background_url|font_choice|audio_greeting_enabled|login_greeting_template|logout_greeting_message|failed_login_greeting_message/i.test(String(error.message || ''))) {
       throw new Error('The backend personalization columns are missing. Run the latest personalization SQL update, then save again.');
@@ -2656,6 +2794,7 @@ function usePersistentSchoolData() {
     const nextData = { ...data, schoolSettings: nextVal };
     try {
       if (!FAST_UI_MODE) setBusyText(browserOnline() ? 'Saving school settings...' : 'Saving school settings locally...');
+      rememberPlatformControlSettings(nextVal);
       setData(nextData);
       await writeOfflineCache(nextData, { pendingCount: offlineState.pendingCount, lastSyncAt: offlineState.lastSyncAt || '' });
       if (!supabase || !browserOnline()) {
@@ -2669,7 +2808,7 @@ function usePersistentSchoolData() {
       const nowIso = new Date().toISOString();
       await writeOfflineCache(nextData, { pendingCount: offlineState.pendingCount, lastSyncAt: nowIso });
       setOfflineState(prev => ({ ...prev, isOnline: true, hasCache: true, lastSyncAt: nowIso }));
-      notify('success', syncResult?.themeFallback ? 'School settings saved. Deep theme saved locally; run the theme SQL update once for school-wide backend storage.' : 'School settings saved.');
+      notify('success', syncResult?.themeFallback ? 'School settings saved. Deep theme saved locally; run the theme SQL update once for school-wide backend storage.' : (syncResult?.platformFallback ? 'School settings saved locally. Run the Super Admin SQL update once for school-wide backend storage.' : 'School settings saved.'));
     } catch (error) {
       console.error('School settings save failed', error);
       setData(data);
@@ -3111,7 +3250,13 @@ function App() {
     if (!authReady || !store.loaded) return;
     const saved = loadAppUserSession();
     if (!saved?.credentialId) return;
-    const credential = store.data.credentials.find(c => c.id === saved.credentialId && c.account_active) || (saved?.role === 'admin' ? ensureAdminCredential(store.data.credentials).find(c => c.role === 'admin' && c.account_active) : null);
+    if (saved.role === 'superadmin' && saved.credentialId === 'superadmin-local') {
+      const superCred = getSuperAdminCredentials(store.data.schoolSettings);
+      setSession({ role: 'superadmin', linkedId: null, credentialId: 'superadmin-local', username: superCred.username });
+      setForcePasswordModal(false);
+      return;
+    }
+    const credential = ensureAdminCredential(store.data.credentials).find(c => c.id === saved.credentialId && c.account_active) || (saved?.role === 'admin' ? ensureAdminCredential(store.data.credentials).find(c => c.role === 'admin' && c.account_active) : null);
     if (!credential) { clearAppUserSession(); return; }
     setSession({ role: credential.role, linkedId: credential.linked_entity_id, credentialId: credential.id, username: credential.username });
     if (credential.force_password_change === 'Yes') setForcePasswordModal(true);
@@ -3119,6 +3264,18 @@ function App() {
 
   const loginWithCredentials = React.useCallback(async (username, password) => {
     const searchUsername = String(username || '').trim().toLowerCase();
+    const superCred = getSuperAdminCredentials(store.data.schoolSettings);
+    if (searchUsername === superCred.username.toLowerCase()) {
+      if (String(password || '') !== superCred.password) throw new Error('Invalid username or password.');
+      const nextSession = { role: 'superadmin', linkedId: null, credentialId: 'superadmin-local', username: superCred.username };
+      setSession(nextSession);
+      saveAppUserSession(nextSession);
+      setActiveNav('dashboard');
+      setForcePasswordModal(false);
+      const greetingMessage = resolveGreetingMessage(store.data.schoolSettings?.login_greeting_template, defaultSchool.login_greeting_template, { firstName: 'Super', fullName: 'Super Admin', schoolName: store.data.schoolSettings?.school_name || defaultSchool.school_name });
+      maybeSpeakGreeting(store.data.schoolSettings, greetingMessage);
+      return { id: 'superadmin-local', role: 'superadmin', username: superCred.username, linked_entity_id: null, force_password_change: 'No', account_active: true };
+    }
     const credential = ensureAdminCredential(store.data.credentials).find(c => (c.username || '').trim().toLowerCase() === searchUsername && c.account_active);
     if (!credential) throw new Error('Invalid username or password.');
     if ((credential.temporary_password || '') !== String(password || '')) throw new Error('Invalid username or password.');
@@ -3153,7 +3310,7 @@ function App() {
   }, [session.credentialId, store]);
 
   if (!store.loaded || !authReady) return <div className="p-10 text-center">Loading system...</div>;
-  return <DataContext.Provider value={store}><SessionContext.Provider value={{ session, setSession, activeNav, setActiveNav, loginWithCredentials, logout, forcePasswordModal, setForcePasswordModal, changeOwnPassword, themeChoice, setThemeChoice, mobileNavOpen, setMobileNavOpen }}><div className="min-h-screen flex flex-col"><Header /><OfflineStateBanner state={store.offlineState} onSync={store.flushPendingChanges} /><div className="flex flex-1 min-h-0">{session.role && <Sidebar />}<main className="flex-1 p-3 md:p-6 overflow-x-hidden">{!session.role ? <LoginScreen /> : <DashboardRouter />}</main></div><AppFooter /><ForcePasswordChangeModal open={!!session.role && forcePasswordModal} onSave={changeOwnPassword} /><BusyOverlay text={store.busyText} /><ToastStack notifications={store.notifications} onDismiss={store.dismissNotification} /></div></SessionContext.Provider></DataContext.Provider>;
+  return <DataContext.Provider value={store}><SessionContext.Provider value={{ session, setSession, activeNav, setActiveNav, loginWithCredentials, logout, forcePasswordModal, setForcePasswordModal, changeOwnPassword, themeChoice, setThemeChoice, mobileNavOpen, setMobileNavOpen }}><div className="min-h-screen flex flex-col"><Header /><OfflineStateBanner state={store.offlineState} onSync={store.flushPendingChanges} /><div className="flex flex-1 min-h-0">{session.role && <Sidebar />}<main className="flex-1 p-3 md:p-6 overflow-x-hidden">{!session.role ? <LoginScreen /> : <DashboardRouter />}</main></div><AppFooter /><ForcePasswordChangeModal open={!!session.role && session.role !== 'superadmin' && forcePasswordModal} onSave={changeOwnPassword} /><BusyOverlay text={store.busyText} /><ToastStack notifications={store.notifications} onDismiss={store.dismissNotification} /></div></SessionContext.Provider></DataContext.Provider>;
 }
 
 function Header() {
@@ -3257,7 +3414,7 @@ function LoginScreen() {
               </div>
             )}
             <h1 className="mt-5 text-2xl md:text-3xl font-black tracking-wide text-slate-800 uppercase">School Management System</h1>
-            <p className="mt-2 text-sm text-slate-500">Sign in with the account credentials created by the School Admin.</p>
+            <p className="mt-2 text-sm text-slate-500">Sign in with your Super Admin or approved school account credentials.</p>
           </div>
 
           <form onSubmit={onSubmit} className="space-y-4">
@@ -3311,9 +3468,11 @@ function Sidebar() {
   const { data } = React.useContext(DataContext);
   const { session, activeNav, setActiveNav, mobileNavOpen, setMobileNavOpen, logout } = React.useContext(SessionContext);
   const unreadChatCount = React.useMemo(() => getUnreadChatCount(data.chats, session.role, session.linkedId), [data.chats, session.role, session.linkedId]);
+  const adminAccessRestricted = session.role === 'admin' && isSchoolAdminAccessRestricted(data.schoolSettings);
   const items = React.useMemo(() => {
     let navItems = [];
-    if (session.role === 'admin') navItems = [['dashboard', 'Dashboard', 'tachometer-alt'], ['principals', 'Principal Management', 'crown'], ['teachers', 'Teachers Management', 'chalkboard-user'], ['students', 'Students Management', 'user-graduate'], ['parents', 'Parents Management', 'users'], ['accountstaff', 'Account Office Staff', 'calculator'], ['classes', 'Classes Management', 'layer-group'], ['subjects', 'Subjects Management', 'book'], ['timetable', 'Timetable Management', 'clock'], ['accounts', 'Accounts & Credentials', 'key'], ['archive', 'Archive Records', 'box-archive'], ['chat', 'System Chat', 'comments'], ['settings', 'School Logo & Details', 'cog']];
+    if (session.role === 'superadmin') navItems = [['dashboard', 'Dashboard', 'tachometer-alt'], ['schooladmin', 'School Admin Credentials', 'user-shield'], ['access', 'Platform Access Control', 'lock'], ['license', 'License Management', 'certificate']];
+    else if (session.role === 'admin') navItems = [['dashboard', 'Dashboard', 'tachometer-alt'], ['license', 'License Plan Usage', 'certificate'], ['principals', 'Principal Management', 'crown'], ['teachers', 'Teachers Management', 'chalkboard-user'], ['students', 'Students Management', 'user-graduate'], ['parents', 'Parents Management', 'users'], ['accountstaff', 'Account Office Staff', 'calculator'], ['classes', 'Classes Management', 'layer-group'], ['subjects', 'Subjects Management', 'book'], ['timetable', 'Timetable Management', 'clock'], ['accounts', 'Accounts & Credentials', 'key'], ['archive', 'Archive Records', 'box-archive'], ['chat', 'System Chat', 'comments'], ['settings', 'School Logo & Details', 'cog']];
     else if (session.role === 'teacher') navItems = [['dashboard', 'Dashboard', 'tachometer-alt'], ['students', 'Student Management', 'users'], ['attendance', 'Attendance Records', 'calendar-check'], ['grades', 'Grades', 'star'], ['salary', 'Salary Record', 'wallet'], ['timetable', 'Timetable', 'clock'], ['chat', 'System Chat', 'comments'], ['profile', 'My Profile', 'image']];
     else if (session.role === 'student') navItems = [['dashboard', 'Dashboard', 'tachometer-alt'], ['grades', 'Grades', 'star'], ['attendance', 'Attendance Records', 'calendar'], ['fees', 'Fee Payments', 'money-bill-wave'], ['timetable', 'Timetable', 'clock'], ['chat', 'System Chat', 'comments']];
     else if (session.role === 'parent') navItems = [['dashboard', 'Dashboard', 'tachometer-alt'], ['grades', 'Grades', 'star'], ['attendance', 'Attendance Records', 'calendar'], ['fees', 'Fee Payments', 'money-bill-wave'], ['chat', 'System Chat', 'comments']];
@@ -3327,12 +3486,20 @@ function Sidebar() {
       await logout();
       return;
     }
+    if (adminAccessRestricted && key !== 'license') {
+      setActiveNav('license');
+      setMobileNavOpen(false);
+      return;
+    }
     setActiveNav(key);
     setMobileNavOpen(false);
   };
-  const getItemClasses = key => key === 'logout'
-    ? 'w-full text-left px-3 py-3 rounded-xl flex items-center gap-3 text-red-600 hover:bg-red-50 font-semibold'
-    : `w-full text-left px-3 py-3 rounded-xl flex items-center gap-3 ${activeNav === key ? 'bg-emerald-50 text-[color:var(--theme-text-strong)] font-semibold' : 'hover:bg-slate-100'}`;
+  const isAdminNavLocked = key => adminAccessRestricted && !['license', 'logout'].includes(key);
+  const getItemClasses = key => {
+    if (key === 'logout') return 'w-full text-left px-3 py-3 rounded-xl flex items-center gap-3 text-red-600 hover:bg-red-50 font-semibold';
+    if (isAdminNavLocked(key)) return 'w-full text-left px-3 py-3 rounded-xl flex items-center gap-3 opacity-35 bg-slate-50 text-slate-400 cursor-not-allowed';
+    return `w-full text-left px-3 py-3 rounded-xl flex items-center gap-3 ${activeNav === key ? 'bg-emerald-50 text-[color:var(--theme-text-strong)] font-semibold' : 'hover:bg-slate-100'}`;
+  };
   return <>
     <div className={`fixed inset-0 z-50 md:hidden ${mobileNavOpen ? '' : 'pointer-events-none'}`}>
       <div className={`absolute inset-0 bg-slate-900/40 transition-opacity ${mobileNavOpen ? 'opacity-100' : 'opacity-0'}`} onClick={() => setMobileNavOpen(false)}></div>
@@ -3344,18 +3511,137 @@ function Sidebar() {
           </div>
           <button onClick={() => setMobileNavOpen(false)} className="w-10 h-10 rounded-xl border border-slate-200 bg-white flex items-center justify-center"><i className="fas fa-times"></i></button>
         </div>
-        <div className="sidebar-scroll space-y-1 pr-1">{items.map(([key, label, icon]) => <button key={key} onClick={() => handleNavigate(key)} className={getItemClasses(key)}><i className={`fas fa-${icon} w-5`}></i><span className="text-sm flex-1">{label}</span>{key === 'chat' && unreadChatCount > 0 && <span className="min-w-[24px] h-6 px-2 rounded-full bg-red-500 text-white text-xs font-bold inline-flex items-center justify-center">{unreadChatCount > 99 ? '99+' : unreadChatCount}</span>}</button>)}</div>
+        <div className="sidebar-scroll space-y-1 pr-1">{items.map(([key, label, icon]) => <button key={key} onClick={() => handleNavigate(key)} className={getItemClasses(key)} title={isAdminNavLocked(key) ? 'Locked by Super Admin license control' : label} aria-disabled={isAdminNavLocked(key)}><i className={`fas fa-${icon} w-5`}></i><span className="text-sm flex-1">{label}</span>{isAdminNavLocked(key) && <i className="fas fa-lock text-xs"></i>}{key === 'chat' && unreadChatCount > 0 && <span className="min-w-[24px] h-6 px-2 rounded-full bg-red-500 text-white text-xs font-bold inline-flex items-center justify-center">{unreadChatCount > 99 ? '99+' : unreadChatCount}</span>}</button>)}</div>
       </aside>
     </div>
-    <aside className="w-72 bg-white border-r p-4 hidden md:block no-print"><div className="sidebar-scroll"><div className="mb-3 text-xs font-bold uppercase tracking-widest text-slate-400">Navigation</div><div className="space-y-1">{items.map(([key, label, icon]) => <button key={key} onClick={() => handleNavigate(key)} className={getItemClasses(key)}><i className={`fas fa-${icon} w-5`}></i><span className="text-sm flex-1">{label}</span>{key === 'chat' && unreadChatCount > 0 && <span className="min-w-[24px] h-6 px-2 rounded-full bg-red-500 text-white text-xs font-bold inline-flex items-center justify-center">{unreadChatCount > 99 ? '99+' : unreadChatCount}</span>}</button>)}</div></div></aside>
+    <aside className="w-72 bg-white border-r p-4 hidden md:block no-print"><div className="sidebar-scroll"><div className="mb-3 text-xs font-bold uppercase tracking-widest text-slate-400">Navigation</div><div className="space-y-1">{items.map(([key, label, icon]) => <button key={key} onClick={() => handleNavigate(key)} className={getItemClasses(key)} title={isAdminNavLocked(key) ? 'Locked by Super Admin license control' : label} aria-disabled={isAdminNavLocked(key)}><i className={`fas fa-${icon} w-5`}></i><span className="text-sm flex-1">{label}</span>{isAdminNavLocked(key) && <i className="fas fa-lock text-xs"></i>}{key === 'chat' && unreadChatCount > 0 && <span className="min-w-[24px] h-6 px-2 rounded-full bg-red-500 text-white text-xs font-bold inline-flex items-center justify-center">{unreadChatCount > 99 ? '99+' : unreadChatCount}</span>}</button>)}</div></div></aside>
   </>;
 }
 
-function DashboardRouter() { const { session, activeNav } = React.useContext(SessionContext); if (session.role === 'admin') return <AdminDashboard activeNav={activeNav} />; if (session.role === 'teacher') return <TeacherDashboard activeNav={activeNav} />; if (session.role === 'student') return <StudentDashboard activeNav={activeNav} />; if (session.role === 'parent') return <ParentDashboard activeNav={activeNav} />; if (session.role === 'accountant') return <AccountantDashboard activeNav={activeNav} />; if (session.role === 'principal') return <PrincipalDashboard activeNav={activeNav} />; return null; }
+function DashboardRouter() { const { session, activeNav } = React.useContext(SessionContext); if (session.role === 'superadmin') return <SuperAdminDashboard activeNav={activeNav} />; if (session.role === 'admin') return <AdminDashboard activeNav={activeNav} />; if (session.role === 'teacher') return <TeacherDashboard activeNav={activeNav} />; if (session.role === 'student') return <StudentDashboard activeNav={activeNav} />; if (session.role === 'parent') return <ParentDashboard activeNav={activeNav} />; if (session.role === 'accountant') return <AccountantDashboard activeNav={activeNav} />; if (session.role === 'principal') return <PrincipalDashboard activeNav={activeNav} />; return null; }
+
+
+function LicenseStatusBadge({ state }) {
+  const status = state?.status || 'Not Issued';
+  const cls = status === 'Active' ? 'online' : status === 'Expired' ? 'absent' : 'late';
+  return <span className={`pill ${cls}`}><i className="fas fa-certificate"></i>{status}</span>;
+}
+
+function LicenseSummaryCard({ settings }) {
+  const license = getLicenseState(settings);
+  return <div className="card p-5 border border-slate-100"><div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3"><div><div className="text-xs font-bold uppercase tracking-wider text-slate-400">Current License</div><h3 className="text-xl font-extrabold mt-1">{license.planLabel}</h3><div className="mt-2 text-sm text-slate-600">Code: <span className="font-mono font-bold text-slate-800">{license.code || 'Not issued yet'}</span></div></div><LicenseStatusBadge state={license} /></div><div className="grid md:grid-cols-3 gap-3 mt-4 text-sm"><div className="rounded-xl border border-slate-200 p-3"><div className="text-xs text-slate-500">Issued</div><div className="font-semibold">{formatReadableDate(license.issuedAt)}</div></div><div className="rounded-xl border border-slate-200 p-3"><div className="text-xs text-slate-500">Activated</div><div className="font-semibold">{formatReadableDate(license.activatedAt)}</div></div><div className="rounded-xl border border-slate-200 p-3"><div className="text-xs text-slate-500">Expires</div><div className="font-semibold">{license.unlimited ? 'Unlimited' : formatReadableDate(license.expiresAt)}</div></div></div></div>;
+}
+
+function SchoolAdminLicenseUsage({ lockedMode=false }) {
+  const { data, setSchoolSettings, notify } = React.useContext(DataContext);
+  const [codeInput, setCodeInput] = React.useState('');
+  const license = getLicenseState(data.schoolSettings);
+  const restricted = isSchoolAdminAccessRestricted(data.schoolSettings);
+  const activate = async e => {
+    e.preventDefault();
+    const entered = String(codeInput || '').trim().toUpperCase();
+    const issued = String(license.code || '').trim().toUpperCase();
+    if (!issued) { notify('error', 'No license has been issued yet. Please contact the Super Admin.'); return; }
+    if (!entered || entered !== issued) { notify('error', 'Invalid license code. Please enter the exact code issued by the Super Admin.'); return; }
+    if (license.expired) { notify('error', 'This license has expired. Please contact the Super Admin for renewal.'); return; }
+    const nowIso = new Date().toISOString();
+    await setSchoolSettings(current => ({
+      ...current,
+      school_license_status: 'Active',
+      school_license_activated_at: current.school_license_activated_at || nowIso,
+      school_license_last_checked_at: nowIso,
+      school_admin_access_locked: false,
+      platform_access_locked: false
+    }));
+    notify('success', 'License activated successfully. Full School Admin access is now unlocked.');
+    setCodeInput('');
+  };
+  return <div className="space-y-5"><SectionHeader title="School Admin License Plan Usage" subtitle={lockedMode || restricted ? 'Your dashboard navigation is locked or faded until the issued license code is activated.' : 'View your current license plan and activation status.'} /><LicenseSummaryCard settings={data.schoolSettings} />{restricted ? <div className="card p-5 border border-amber-200 bg-amber-50"><div className="flex items-start gap-3"><div className="w-11 h-11 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0"><i className="fas fa-lock"></i></div><div className="flex-1"><h3 className="font-extrabold text-lg text-amber-900">Full dashboard access is locked</h3><p className="text-sm text-amber-800 mt-1">Enter the license code issued by the Super Admin to unlock all School Admin navigation sections.</p><form onSubmit={activate} className="mt-4 grid md:grid-cols-[1fr_auto] gap-3"><input className="input font-mono uppercase" value={codeInput} onChange={e => setCodeInput(e.target.value.toUpperCase())} placeholder="Enter license code" /><button className="btn btn-primary" type="submit"><i className="fas fa-unlock mr-2"></i>Activate License</button></form></div></div></div> : <div className="card p-5 border border-emerald-200 bg-emerald-50 text-emerald-900"><div className="font-bold"><i className="fas fa-check-circle mr-2"></i>Full access is currently allowed.</div><div className="text-sm mt-1">All School Admin dashboard navigation sections are available.</div></div>}</div>;
+}
+
+function SuperAdminDashboard({ activeNav }) {
+  const { data, setSchoolSettings, updateCollection, notify } = React.useContext(DataContext);
+  const adminCredential = ensureAdminCredential(data.credentials).find(x => x.role === 'admin') || normalizeAdminCredential(DEFAULT_ADMIN_CREDENTIAL);
+  const [credentialForm, setCredentialForm] = React.useState({ username: adminCredential.username || 'admin', temporary_password: adminCredential.temporary_password || 'admin12345' });
+  const [licensePlan, setLicensePlan] = React.useState('oneYear');
+  React.useEffect(() => setCredentialForm({ username: adminCredential.username || 'admin', temporary_password: adminCredential.temporary_password || 'admin12345' }), [adminCredential.username, adminCredential.temporary_password]);
+  const license = getLicenseState(data.schoolSettings);
+  const restricted = isSchoolAdminAccessRestricted(data.schoolSettings);
+  const saveSchoolAdminCredential = async e => {
+    e.preventDefault();
+    const username = String(credentialForm.username || '').trim();
+    const password = String(credentialForm.temporary_password || '').trim();
+    if (!username || !password) { notify('error', 'School Admin username and password are required.'); return; }
+    await updateCollection('credentials', items => {
+      const list = ensureAdminCredential(items);
+      const exists = list.some(x => x.role === 'admin');
+      const nextAdmin = { ...normalizeAdminCredential(adminCredential), id: adminCredential.id || uid(), username, temporary_password: password, force_password_change: 'No', account_active: true, is_system_default: true };
+      return exists ? list.map(x => x.role === 'admin' ? nextAdmin : x) : [nextAdmin, ...list];
+    }, { suppressBusy: true, optimistic: true, successMessage: 'School Admin credentials issued successfully.', offlineSuccessMessage: 'School Admin credentials issued successfully.' });
+    notify('success', 'Unique School Admin credentials have been issued.');
+  };
+  const generateAdminCredential = () => {
+    setCredentialForm({ username: `schooladmin${Math.floor(Math.random() * 900 + 100)}`, temporary_password: generatePassword() });
+  };
+  const resetAdminPassword = async () => {
+    const nextPassword = generatePassword();
+    setCredentialForm(prev => ({ ...prev, temporary_password: nextPassword }));
+    await updateCollection('credentials', items => ensureAdminCredential(items).map(x => x.role === 'admin' ? { ...normalizeAdminCredential(x), temporary_password: nextPassword, force_password_change: 'No', account_active: true, is_system_default: true } : x), { suppressBusy: true, optimistic: true, successMessage: 'School Admin password reset successfully.', offlineSuccessMessage: 'School Admin password reset successfully.' });
+    notify('success', `School Admin password reset successfully: ${nextPassword}`);
+  };
+  const setAdminLock = async locked => {
+    const nowIso = new Date().toISOString();
+    await setSchoolSettings(current => ({
+      ...current,
+      school_admin_access_locked: !!locked,
+      platform_access_locked: !!locked,
+      school_license_status: !locked && current.school_license_code ? 'Active' : (current.school_license_status || defaultSchool.school_license_status),
+      school_license_activated_at: !locked && current.school_license_code ? (current.school_license_activated_at || nowIso) : current.school_license_activated_at,
+      school_license_last_checked_at: nowIso
+    }));
+    notify('success', locked ? 'School Admin platform access has been locked.' : 'School Admin platform access has been unlocked.');
+  };
+  const issueLicense = async e => {
+    e.preventDefault();
+    const plan = LICENSE_PLAN_OPTIONS[licensePlan];
+    if (!plan) { notify('error', 'Select a valid license plan.'); return; }
+    const now = new Date();
+    const code = generateLicenseCode(licensePlan);
+    await setSchoolSettings(current => ({
+      ...current,
+      school_license_plan: licensePlan,
+      school_license_label: plan.label,
+      school_license_code: code,
+      school_license_status: 'Issued',
+      school_license_issued_at: now.toISOString(),
+      school_license_activated_at: '',
+      school_license_expires_at: calculateLicenseExpiryDate(licensePlan, now),
+      school_license_last_checked_at: now.toISOString(),
+      school_admin_access_locked: true,
+      platform_access_locked: true
+    }));
+    notify('success', `License issued successfully. Code: ${code}`);
+  };
+  const clearLicense = async () => {
+    if (!confirmDeleteAction('the current School Admin license record')) return;
+    await setSchoolSettings(current => ({ ...current, school_license_plan: '', school_license_label: 'No license issued', school_license_code: '', school_license_status: 'Not Issued', school_license_issued_at: '', school_license_activated_at: '', school_license_expires_at: '', school_license_last_checked_at: new Date().toISOString(), school_admin_access_locked: false, platform_access_locked: false }));
+    notify('success', 'School Admin license record cleared.');
+  };
+  const credentialsPanel = <div className="card p-5 space-y-4"><SectionHeader title="Issue School Admin Credentials" subtitle="Only the Super Admin can issue or reset the School Admin login credentials." actions={<button type="button" onClick={generateAdminCredential} className="btn btn-outline"><i className="fas fa-wand-magic-sparkles mr-2"></i>Generate Unique Credentials</button>} /><form onSubmit={saveSchoolAdminCredential} className="grid md:grid-cols-[1fr_1fr_auto] gap-4 items-end"><Field label="School Admin Username"><input className="input" value={credentialForm.username} onChange={e => setCredentialForm({ ...credentialForm, username: e.target.value })} /></Field><Field label="School Admin Password"><input className="input" value={credentialForm.temporary_password} onChange={e => setCredentialForm({ ...credentialForm, temporary_password: e.target.value })} /></Field><button className="btn btn-primary" type="submit">Save Credentials</button></form><div className="flex flex-wrap gap-2"><button className="btn btn-outline" type="button" onClick={resetAdminPassword}><i className="fas fa-key mr-2"></i>Reset School Admin Password Only</button></div><div className="rounded-xl bg-slate-50 border border-slate-200 p-3 text-sm"><b>Current School Admin:</b> {adminCredential.username} <span className="mx-2">•</span> <b>Password:</b> {adminCredential.temporary_password}</div></div>;
+  const accessPanel = <div className="card p-5 space-y-4"><SectionHeader title="Platform-Level Access Control" subtitle="Locking access fades and blocks School Admin navigation. Login and logout remain available, while license activation is still available." /><div className="grid-fit"><StatCard label="School Admin Access" value={restricted ? 'Locked' : 'Unlocked'} icon={restricted ? 'lock' : 'unlock'} accent={restricted ? 'rose' : 'emerald'} /><StatCard label="License Status" value={license.status} icon="certificate" accent={license.active ? 'emerald' : 'amber'} /><StatCard label="License Plan" value={license.planLabel} icon="calendar-check" accent="blue" /></div><div className="flex flex-wrap gap-3"><button type="button" className="btn btn-danger" onClick={() => setAdminLock(true)}><i className="fas fa-lock mr-2"></i>Lock School Admin Full Access</button><button type="button" className="btn btn-primary" onClick={() => setAdminLock(false)}><i className="fas fa-unlock mr-2"></i>Unlock School Admin Full Access</button></div></div>;
+  const licensePanel = <div className="space-y-4"><LicenseSummaryCard settings={data.schoolSettings} /><div className="card p-5 space-y-4"><SectionHeader title="Issue License for School Admin Operation" subtitle="Choose a license plan and generate the code the School Admin must activate under License Plan Usage." /><form onSubmit={issueLicense} className="grid md:grid-cols-[1fr_auto] gap-4 items-end"><Field label="License Plan"><select className="select" value={licensePlan} onChange={e => setLicensePlan(e.target.value)}>{Object.entries(LICENSE_PLAN_OPTIONS).map(([key, plan]) => <option key={key} value={key}>{plan.label}</option>)}</select></Field><button type="submit" className="btn btn-primary"><i className="fas fa-certificate mr-2"></i>Generate and Issue License</button></form><div className="flex flex-wrap gap-2"><button type="button" className="btn btn-outline" onClick={clearLicense}><i className="fas fa-trash mr-2"></i>Clear License</button></div></div></div>;
+  if (activeNav === 'schooladmin') return credentialsPanel;
+  if (activeNav === 'access') return accessPanel;
+  if (activeNav === 'license') return licensePanel;
+  return <div className="space-y-5"><SectionHeader title="Super Admin Dashboard" subtitle="Platform-level control for School Admin access, licensing, and School Admin credentials." /><div className="grid-fit"><StatCard label="Platform Access" value={restricted ? 'Locked' : 'Unlocked'} icon={restricted ? 'lock' : 'unlock'} accent={restricted ? 'rose' : 'emerald'} /><StatCard label="License Status" value={license.status} icon="certificate" accent={license.active ? 'emerald' : 'amber'} /><StatCard label="School Admin Username" value={adminCredential.username || 'Not set'} icon="user-shield" accent="blue" /></div>{accessPanel}{licensePanel}{credentialsPanel}</div>;
+}
 
 function AdminDashboard({ activeNav }) {
   const { data } = React.useContext(DataContext); const recentlyCreatedAccounts = [...safeArray(data.credentials)].slice(-5).reverse();
-  if (activeNav === 'dashboard') return <div className="space-y-4 md:space-y-6"><SectionHeader title="School Admin Dashboard" subtitle="Core records, summaries, credentials, and linked school data." /><div className="grid-fit mobile-dashboard-grid"><StatCard label="Total Students" value={data.students.length} icon="user-graduate" accent="blue" /><StatCard label="Total Teachers" value={data.teachers.length} icon="chalkboard-user" accent="emerald" /><StatCard label="Total Parents" value={data.parents.length} icon="users" accent="purple" /><StatCard label="Total Accounts Office Staff" value={data.accountStaff.length} icon="calculator" accent="amber" /><StatCard label="Total Principals" value={data.principals.length} icon="crown" accent="rose" /><StatCard label="Total Classes" value={data.classes.length} icon="layer-group" accent="sky" /><StatCard label="Total Subjects" value={data.subjects.length} icon="book" accent="indigo" /><StatCard label="Recently Created Accounts" value={recentlyCreatedAccounts.length} icon="key" accent="slate" /><StatCard label="Archived Promotion Records" value={safeArray(data.archiveRecords).length} icon="box-archive" accent="amber" /></div><Table columns={['Name', 'Role', 'Username', 'Temporary Password', 'Force Password Change']} rows={recentlyCreatedAccounts} renderCell={(row, c) => { if (c === 'Name') return linkedEntityName(data, row.role, row.linked_entity_id); if (c === 'Role') return ROLE_LABELS[row.role]; if (c === 'Username') return row.username; if (c === 'Temporary Password') return row.temporary_password; if (c === 'Force Password Change') return row.force_password_change; return ''; }} /></div>;
+  const adminRestricted = isSchoolAdminAccessRestricted(data.schoolSettings);
+  if (activeNav === 'license') return <SchoolAdminLicenseUsage lockedMode={adminRestricted} />;
+  if (adminRestricted) return <SchoolAdminLicenseUsage lockedMode={true} />;
+  if (activeNav === 'dashboard') return <div className="space-y-4 md:space-y-6"><SectionHeader title="School Admin Dashboard" subtitle="Core records, summaries, credentials, and linked school data." /><LicenseSummaryCard settings={data.schoolSettings} /><div className="grid-fit mobile-dashboard-grid"><StatCard label="Total Students" value={data.students.length} icon="user-graduate" accent="blue" /><StatCard label="Total Teachers" value={data.teachers.length} icon="chalkboard-user" accent="emerald" /><StatCard label="Total Parents" value={data.parents.length} icon="users" accent="purple" /><StatCard label="Total Accounts Office Staff" value={data.accountStaff.length} icon="calculator" accent="amber" /><StatCard label="Total Principals" value={data.principals.length} icon="crown" accent="rose" /><StatCard label="Total Classes" value={data.classes.length} icon="layer-group" accent="sky" /><StatCard label="Total Subjects" value={data.subjects.length} icon="book" accent="indigo" /><StatCard label="Recently Created Accounts" value={recentlyCreatedAccounts.length} icon="key" accent="slate" /><StatCard label="Archived Promotion Records" value={safeArray(data.archiveRecords).length} icon="box-archive" accent="amber" /></div><Table columns={['Name', 'Role', 'Username', 'Temporary Password', 'Force Password Change']} rows={recentlyCreatedAccounts} renderCell={(row, c) => { if (c === 'Name') return linkedEntityName(data, row.role, row.linked_entity_id); if (c === 'Role') return ROLE_LABELS[row.role]; if (c === 'Username') return row.username; if (c === 'Temporary Password') return row.temporary_password; if (c === 'Force Password Change') return row.force_password_change; return ''; }} /></div>;
   if (activeNav === 'principals') return <PrincipalManagement />;
   if (activeNav === 'teachers') return <TeacherManagement />;
   if (activeNav === 'students') return <StudentManagement />;
@@ -3550,7 +3836,7 @@ function TimetableManagement({ adminMode=false, teacherId=null, classId=null }) 
 }
 
 function UserCredentialsManagement() {
-  const { data, updateCollection, notify } = React.useContext(DataContext); const [open, setOpen] = React.useState(false); const [form, setForm] = React.useState(emptyCredential); const [savedCredentialInfo, setSavedCredentialInfo] = React.useState(null);
+  const { data, updateCollection, notify } = React.useContext(DataContext); const [open, setOpen] = React.useState(false); const [form, setForm] = React.useState(emptyCredential); const [savedCredentialInfo, setSavedCredentialInfo] = React.useState(null); const visibleCredentialRows = ensureAdminCredential(data.credentials).filter(row => row.role !== 'admin');
   const save = async e => {
     e.preventDefault();
     const collection = availableLinkedRecords(data, form.role);
@@ -3603,7 +3889,7 @@ function UserCredentialsManagement() {
     const nextProtected = !row.is_system_default;
     await updateCollection('credentials', items => ensureAdminCredential(items.map(x => x.id === row.id ? { ...x, is_system_default: nextProtected, account_active: true } : x)), { suppressBusy: true, optimistic: true, successMessage: nextProtected ? 'School Admin credential protected successfully.' : 'School Admin credential unprotected successfully.', offlineSuccessMessage: nextProtected ? 'School Admin credential protected successfully.' : 'School Admin credential unprotected successfully.' });
   };
-  return <div className="space-y-4"><SectionHeader title="User Account & Credentials Management" subtitle="Create, edit, reset password, deactivate, and delete role based linked accounts." actions={<button onClick={() => { setForm(emptyCredential); setOpen(true); }} className="btn btn-primary"><i className="fas fa-plus mr-2"></i>Create Account</button>} />{savedCredentialInfo ? <div className="card border border-green-200 bg-green-50 px-4 py-4 text-green-800"><div className="flex items-start gap-3"><span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-green-100 text-green-700"><i className="fas fa-check"></i></span><div className="w-full"><div className="font-semibold">Account credential saved successfully</div><div className="mt-1 text-sm text-green-700">The saved account information is displayed below and will remain visible in this section.</div><div className="mt-3 grid gap-3 md:grid-cols-2"><div className="rounded-xl border border-green-200 bg-white/80 px-3 py-2"><div className="text-xs font-semibold uppercase tracking-wide text-green-700">User Info</div><div className="mt-1 text-sm font-medium text-slate-800">{savedCredentialInfo.linkedName || 'Backend School Admin'}</div><div className="text-xs text-slate-600">{savedCredentialInfo.roleLabel}</div></div><div className="rounded-xl border border-green-200 bg-white/80 px-3 py-2"><div className="text-xs font-semibold uppercase tracking-wide text-green-700">Username</div><div className="mt-1 text-sm font-medium text-slate-800">{savedCredentialInfo.username}</div></div><div className="rounded-xl border border-green-200 bg-white/80 px-3 py-2"><div className="text-xs font-semibold uppercase tracking-wide text-green-700">Temporary Password</div><div className="mt-1 text-sm font-medium text-slate-800">{savedCredentialInfo.temporary_password}</div></div><div className="rounded-xl border border-green-200 bg-white/80 px-3 py-2"><div className="text-xs font-semibold uppercase tracking-wide text-green-700">Force Password Change</div><div className="mt-1 text-sm font-medium text-slate-800">{savedCredentialInfo.force_password_change}</div></div><div className="rounded-xl border border-green-200 bg-white/80 px-3 py-2 md:col-span-2"><div className="text-xs font-semibold uppercase tracking-wide text-green-700">Account</div><div className="mt-1"><span className={`pill ${savedCredentialInfo.account_active ? 'online' : 'offline'}`}>{savedCredentialInfo.account_active ? 'Active' : 'Inactive'}</span></div></div></div></div></div></div> : null}<div className="card p-3 md:p-4 table-wrap"><table className="min-w-full text-sm"><thead><tr className="border-b"><th className="text-left py-3 px-3 font-semibold">Role</th><th className="text-left py-3 px-3 font-semibold">Select Existing Name</th><th className="text-left py-3 px-3 font-semibold">Generated Username</th><th className="text-left py-3 px-3 font-semibold">Temporary Password</th><th className="text-left py-3 px-3 font-semibold">Force Password Change</th><th className="text-left py-3 px-3 font-semibold">Account</th><th className="text-left py-3 px-3 font-semibold">Actions</th></tr></thead><tbody>{ensureAdminCredential(data.credentials).length === 0 ? <tr><td colSpan="7" className="py-6 px-3 text-center text-slate-500">No records found.</td></tr> : ensureAdminCredential(data.credentials).map(row => <tr key={row.id} className="border-b last:border-b-0"><td className="py-3 px-3">{ROLE_LABELS[row.role]}</td><td className="py-3 px-3">{linkedEntityName(data, row.role, row.linked_entity_id)}</td><td className="py-3 px-3">{row.username}</td><td className="py-3 px-3">{row.temporary_password}</td><td className="py-3 px-3">{row.force_password_change}</td><td className="py-3 px-3"><span className={`pill ${row.account_active ? 'online' : 'offline'}`}>{row.account_active ? 'Active' : 'Inactive'}</span></td><td className="py-3 px-3"><div className="flex flex-row flex-nowrap items-center gap-2 whitespace-nowrap"><button className="btn btn-outline !px-3 !py-2 text-sm" onClick={() => edit(row)}>Edit</button><button className="btn btn-outline !px-3 !py-2 text-sm" onClick={() => resetPw(row)}>Reset PW</button><button className="btn btn-outline !px-3 !py-2 text-sm" onClick={() => toggleActive(row)}>{row.role === 'admin' ? (row.account_active ? 'Deactivate' : 'Activate') : (row.account_active ? 'Deactivate' : 'Activate')}</button>{row.role === 'admin' ? <button className={`btn !px-3 !py-2 text-sm ${row.is_system_default ? 'btn-danger' : 'btn-primary'}`} type="button" onClick={() => toggleProtection(row)}>{row.is_system_default ? 'Protected' : 'Unprotected'}</button> : <button className="btn btn-danger !px-3 !py-2 text-sm" onClick={() => remove(row.id)}>Delete</button>}</div></td></tr>)}</tbody></table></div><Modal open={open} onClose={() => setOpen(false)} title={form.id ? 'Edit User Account' : 'Create User Account'} max="max-w-3xl"><form onSubmit={save} className="space-y-4"><div className="grid md:grid-cols-2 gap-4"><Field label="Select Role"><select className="select" value={form.role} onChange={e => setForm({ ...form, role: e.target.value, linked_entity_id: '' })}><option value="admin">School Admin</option><option value="teacher">Teacher</option><option value="student">Student</option><option value="parent">Parent</option><option value="accountant">Accounts Office Staff</option><option value="principal">Principal</option></select></Field><Field label="Select Existing Name"><select className="select" value={form.linked_entity_id} onChange={e => setForm({ ...form, linked_entity_id: e.target.value })} disabled={form.role === 'admin'}><option value="">{form.role === 'admin' ? 'Backend School Admin' : 'Select existing name'}</option>{availableLinkedRecords(data, form.role).map(x => <option key={x.id} value={x.id}>{x.full_name}</option>)}</select></Field><Field label="Generated Username"><input className="input" value={form.username} onChange={e => setForm({ ...form, username: e.target.value })} placeholder="Auto generated on save" /></Field><Field label="Temporary Password"><input className="input" value={form.temporary_password} onChange={e => setForm({ ...form, temporary_password: e.target.value })} placeholder="Auto generated on save" /></Field><Field label="Force Password Change"><select className="select" value={form.force_password_change} onChange={e => setForm({ ...form, force_password_change: e.target.value })}>{FORCE_PASSWORD_CHANGE.map(x => <option key={x}>{x}</option>)}</select></Field></div><div className="flex justify-end gap-2"><button type="button" className="btn btn-secondary" onClick={() => setOpen(false)}>Cancel</button><button type="submit" className="btn btn-primary">Save Account</button></div></form></Modal></div>;
+  return <div className="space-y-4"><SectionHeader title="User Account & Credentials Management" subtitle="Create, edit, reset password, deactivate, and delete role based linked accounts." actions={<button onClick={() => { setForm(emptyCredential); setOpen(true); }} className="btn btn-primary"><i className="fas fa-plus mr-2"></i>Create Account</button>} />{savedCredentialInfo ? <div className="card border border-green-200 bg-green-50 px-4 py-4 text-green-800"><div className="flex items-start gap-3"><span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-green-100 text-green-700"><i className="fas fa-check"></i></span><div className="w-full"><div className="font-semibold">Account credential saved successfully</div><div className="mt-1 text-sm text-green-700">The saved account information is displayed below and will remain visible in this section.</div><div className="mt-3 grid gap-3 md:grid-cols-2"><div className="rounded-xl border border-green-200 bg-white/80 px-3 py-2"><div className="text-xs font-semibold uppercase tracking-wide text-green-700">User Info</div><div className="mt-1 text-sm font-medium text-slate-800">{savedCredentialInfo.linkedName || 'Backend School Admin'}</div><div className="text-xs text-slate-600">{savedCredentialInfo.roleLabel}</div></div><div className="rounded-xl border border-green-200 bg-white/80 px-3 py-2"><div className="text-xs font-semibold uppercase tracking-wide text-green-700">Username</div><div className="mt-1 text-sm font-medium text-slate-800">{savedCredentialInfo.username}</div></div><div className="rounded-xl border border-green-200 bg-white/80 px-3 py-2"><div className="text-xs font-semibold uppercase tracking-wide text-green-700">Temporary Password</div><div className="mt-1 text-sm font-medium text-slate-800">{savedCredentialInfo.temporary_password}</div></div><div className="rounded-xl border border-green-200 bg-white/80 px-3 py-2"><div className="text-xs font-semibold uppercase tracking-wide text-green-700">Force Password Change</div><div className="mt-1 text-sm font-medium text-slate-800">{savedCredentialInfo.force_password_change}</div></div><div className="rounded-xl border border-green-200 bg-white/80 px-3 py-2 md:col-span-2"><div className="text-xs font-semibold uppercase tracking-wide text-green-700">Account</div><div className="mt-1"><span className={`pill ${savedCredentialInfo.account_active ? 'online' : 'offline'}`}>{savedCredentialInfo.account_active ? 'Active' : 'Inactive'}</span></div></div></div></div></div></div> : null}<div className="card p-3 md:p-4 table-wrap"><table className="min-w-full text-sm"><thead><tr className="border-b"><th className="text-left py-3 px-3 font-semibold">Role</th><th className="text-left py-3 px-3 font-semibold">Select Existing Name</th><th className="text-left py-3 px-3 font-semibold">Generated Username</th><th className="text-left py-3 px-3 font-semibold">Temporary Password</th><th className="text-left py-3 px-3 font-semibold">Force Password Change</th><th className="text-left py-3 px-3 font-semibold">Account</th><th className="text-left py-3 px-3 font-semibold">Actions</th></tr></thead><tbody>{visibleCredentialRows.length === 0 ? <tr><td colSpan="7" className="py-6 px-3 text-center text-slate-500">No records found.</td></tr> : visibleCredentialRows.map(row => <tr key={row.id} className="border-b last:border-b-0"><td className="py-3 px-3">{ROLE_LABELS[row.role]}</td><td className="py-3 px-3">{linkedEntityName(data, row.role, row.linked_entity_id)}</td><td className="py-3 px-3">{row.username}</td><td className="py-3 px-3">{row.temporary_password}</td><td className="py-3 px-3">{row.force_password_change}</td><td className="py-3 px-3"><span className={`pill ${row.account_active ? 'online' : 'offline'}`}>{row.account_active ? 'Active' : 'Inactive'}</span></td><td className="py-3 px-3"><div className="flex flex-row flex-nowrap items-center gap-2 whitespace-nowrap"><button className="btn btn-outline !px-3 !py-2 text-sm" onClick={() => edit(row)}>Edit</button><button className="btn btn-outline !px-3 !py-2 text-sm" onClick={() => resetPw(row)}>Reset PW</button><button className="btn btn-outline !px-3 !py-2 text-sm" onClick={() => toggleActive(row)}>{row.role === 'admin' ? (row.account_active ? 'Deactivate' : 'Activate') : (row.account_active ? 'Deactivate' : 'Activate')}</button>{row.role === 'admin' ? <button className={`btn !px-3 !py-2 text-sm ${row.is_system_default ? 'btn-danger' : 'btn-primary'}`} type="button" onClick={() => toggleProtection(row)}>{row.is_system_default ? 'Protected' : 'Unprotected'}</button> : <button className="btn btn-danger !px-3 !py-2 text-sm" onClick={() => remove(row.id)}>Delete</button>}</div></td></tr>)}</tbody></table></div><Modal open={open} onClose={() => setOpen(false)} title={form.id ? 'Edit User Account' : 'Create User Account'} max="max-w-3xl"><form onSubmit={save} className="space-y-4"><div className="grid md:grid-cols-2 gap-4"><Field label="Select Role"><select className="select" value={form.role} onChange={e => setForm({ ...form, role: e.target.value, linked_entity_id: '' })}><option value="teacher">Teacher</option><option value="student">Student</option><option value="parent">Parent</option><option value="accountant">Accounts Office Staff</option><option value="principal">Principal</option></select></Field><Field label="Select Existing Name"><select className="select" value={form.linked_entity_id} onChange={e => setForm({ ...form, linked_entity_id: e.target.value })} disabled={form.role === 'admin'}><option value="">{form.role === 'admin' ? 'Backend School Admin' : 'Select existing name'}</option>{availableLinkedRecords(data, form.role).map(x => <option key={x.id} value={x.id}>{x.full_name}</option>)}</select></Field><Field label="Generated Username"><input className="input" value={form.username} onChange={e => setForm({ ...form, username: e.target.value })} placeholder="Auto generated on save" /></Field><Field label="Temporary Password"><input className="input" value={form.temporary_password} onChange={e => setForm({ ...form, temporary_password: e.target.value })} placeholder="Auto generated on save" /></Field><Field label="Force Password Change"><select className="select" value={form.force_password_change} onChange={e => setForm({ ...form, force_password_change: e.target.value })}>{FORCE_PASSWORD_CHANGE.map(x => <option key={x}>{x}</option>)}</select></Field></div><div className="flex justify-end gap-2"><button type="button" className="btn btn-secondary" onClick={() => setOpen(false)}>Cancel</button><button type="submit" className="btn btn-primary">Save Account</button></div></form></Modal></div>;
 }
 
 function SchoolSettingsManager() {
