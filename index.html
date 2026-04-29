@@ -308,6 +308,17 @@ function isSchoolAdminAccessRestricted(settings={}) {
   if (license.isIssued && !license.active) return true;
   return false;
 }
+function isWholeSchoolPortalRestricted(role, settings={}) {
+  return !!role && role !== 'superadmin' && isSchoolAdminAccessRestricted(settings);
+}
+function canUseNavigationWhileRestricted(role, key) {
+  if (key === 'logout') return true;
+  if (role === 'admin' && key === 'license') return true;
+  return false;
+}
+function isSuspendedLicense(settings={}) {
+  return String(settings.school_license_status || '').trim().toLowerCase() === 'suspended';
+}
 function getSuperAdminCredentials(settings={}) {
   return {
     username: String(settings.super_admin_username || SUPER_ADMIN_DEFAULT_USERNAME).trim() || SUPER_ADMIN_DEFAULT_USERNAME,
@@ -3258,8 +3269,10 @@ function App() {
     }
     const credential = ensureAdminCredential(store.data.credentials).find(c => c.id === saved.credentialId && c.account_active) || (saved?.role === 'admin' ? ensureAdminCredential(store.data.credentials).find(c => c.role === 'admin' && c.account_active) : null);
     if (!credential) { clearAppUserSession(); return; }
+    const lockedAfterRestore = isWholeSchoolPortalRestricted(credential.role, store.data.schoolSettings);
     setSession({ role: credential.role, linkedId: credential.linked_entity_id, credentialId: credential.id, username: credential.username });
-    if (credential.force_password_change === 'Yes') setForcePasswordModal(true);
+    if (lockedAfterRestore && credential.role !== 'admin') setActiveNav('locked');
+    if (!lockedAfterRestore && credential.force_password_change === 'Yes') setForcePasswordModal(true);
   }, [authReady, store.loaded, store.data.credentials]);
 
   const loginWithCredentials = React.useCallback(async (username, password) => {
@@ -3281,10 +3294,11 @@ function App() {
     if ((credential.temporary_password || '') !== String(password || '')) throw new Error('Invalid username or password.');
     await store.setPresenceStatus(credential.role, credential.linked_entity_id, true);
     const nextSession = { role: credential.role, linkedId: credential.linked_entity_id, credentialId: credential.id, username: credential.username };
+    const lockedAfterLogin = isWholeSchoolPortalRestricted(credential.role, store.data.schoolSettings);
     setSession(nextSession);
     saveAppUserSession(nextSession);
-    setActiveNav('dashboard');
-    setForcePasswordModal(credential.force_password_change === 'Yes');
+    setActiveNav(lockedAfterLogin && credential.role !== 'admin' ? 'locked' : 'dashboard');
+    setForcePasswordModal(!lockedAfterLogin && credential.force_password_change === 'Yes');
     const displayName = resolveCredentialDisplayName(store.data, credential);
     const firstName = extractFirstName(displayName);
     const greetingMessage = resolveGreetingMessage(store.data.schoolSettings?.login_greeting_template, defaultSchool.login_greeting_template, { firstName, fullName: displayName, schoolName: store.data.schoolSettings?.school_name || defaultSchool.school_name });
@@ -3310,7 +3324,7 @@ function App() {
   }, [session.credentialId, store]);
 
   if (!store.loaded || !authReady) return <div className="p-10 text-center">Loading system...</div>;
-  return <DataContext.Provider value={store}><SessionContext.Provider value={{ session, setSession, activeNav, setActiveNav, loginWithCredentials, logout, forcePasswordModal, setForcePasswordModal, changeOwnPassword, themeChoice, setThemeChoice, mobileNavOpen, setMobileNavOpen }}><div className="min-h-screen flex flex-col"><Header /><OfflineStateBanner state={store.offlineState} onSync={store.flushPendingChanges} /><div className="flex flex-1 min-h-0">{session.role && <Sidebar />}<main className="flex-1 p-3 md:p-6 overflow-x-hidden">{!session.role ? <LoginScreen /> : <DashboardRouter />}</main></div><AppFooter /><ForcePasswordChangeModal open={!!session.role && session.role !== 'superadmin' && forcePasswordModal} onSave={changeOwnPassword} /><BusyOverlay text={store.busyText} /><ToastStack notifications={store.notifications} onDismiss={store.dismissNotification} /></div></SessionContext.Provider></DataContext.Provider>;
+  return <DataContext.Provider value={store}><SessionContext.Provider value={{ session, setSession, activeNav, setActiveNav, loginWithCredentials, logout, forcePasswordModal, setForcePasswordModal, changeOwnPassword, themeChoice, setThemeChoice, mobileNavOpen, setMobileNavOpen }}><div className="min-h-screen flex flex-col"><Header /><OfflineStateBanner state={store.offlineState} onSync={store.flushPendingChanges} /><div className="flex flex-1 min-h-0">{session.role && <Sidebar />}<main className="flex-1 p-3 md:p-6 overflow-x-hidden">{!session.role ? <LoginScreen /> : <DashboardRouter />}</main></div><AppFooter /><ForcePasswordChangeModal open={!!session.role && session.role !== 'superadmin' && !isWholeSchoolPortalRestricted(session.role, store.data.schoolSettings) && forcePasswordModal} onSave={changeOwnPassword} /><BusyOverlay text={store.busyText} /><ToastStack notifications={store.notifications} onDismiss={store.dismissNotification} /></div></SessionContext.Provider></DataContext.Provider>;
 }
 
 function Header() {
@@ -3468,7 +3482,7 @@ function Sidebar() {
   const { data } = React.useContext(DataContext);
   const { session, activeNav, setActiveNav, mobileNavOpen, setMobileNavOpen, logout } = React.useContext(SessionContext);
   const unreadChatCount = React.useMemo(() => getUnreadChatCount(data.chats, session.role, session.linkedId), [data.chats, session.role, session.linkedId]);
-  const adminAccessRestricted = session.role === 'admin' && isSchoolAdminAccessRestricted(data.schoolSettings);
+  const userAccessRestricted = isWholeSchoolPortalRestricted(session.role, data.schoolSettings);
   const items = React.useMemo(() => {
     let navItems = [];
     if (session.role === 'superadmin') navItems = [['dashboard', 'Dashboard', 'tachometer-alt'], ['schooladmin', 'School Admin Credentials', 'user-shield'], ['access', 'Platform Access Control', 'lock'], ['license', 'License Management', 'certificate']];
@@ -3486,18 +3500,18 @@ function Sidebar() {
       await logout();
       return;
     }
-    if (adminAccessRestricted && key !== 'license') {
-      setActiveNav('license');
+    if (userAccessRestricted && !canUseNavigationWhileRestricted(session.role, key)) {
+      setActiveNav(session.role === 'admin' ? 'license' : 'locked');
       setMobileNavOpen(false);
       return;
     }
     setActiveNav(key);
     setMobileNavOpen(false);
   };
-  const isAdminNavLocked = key => adminAccessRestricted && !['license', 'logout'].includes(key);
+  const isNavLocked = key => userAccessRestricted && !canUseNavigationWhileRestricted(session.role, key);
   const getItemClasses = key => {
     if (key === 'logout') return 'w-full text-left px-3 py-3 rounded-xl flex items-center gap-3 text-red-600 hover:bg-red-50 font-semibold';
-    if (isAdminNavLocked(key)) return 'w-full text-left px-3 py-3 rounded-xl flex items-center gap-3 opacity-35 bg-slate-50 text-slate-400 cursor-not-allowed';
+    if (isNavLocked(key)) return 'w-full text-left px-3 py-3 rounded-xl flex items-center gap-3 opacity-35 bg-slate-50 text-slate-400 cursor-not-allowed';
     return `w-full text-left px-3 py-3 rounded-xl flex items-center gap-3 ${activeNav === key ? 'bg-emerald-50 text-[color:var(--theme-text-strong)] font-semibold' : 'hover:bg-slate-100'}`;
   };
   return <>
@@ -3511,14 +3525,47 @@ function Sidebar() {
           </div>
           <button onClick={() => setMobileNavOpen(false)} className="w-10 h-10 rounded-xl border border-slate-200 bg-white flex items-center justify-center"><i className="fas fa-times"></i></button>
         </div>
-        <div className="sidebar-scroll space-y-1 pr-1">{items.map(([key, label, icon]) => <button key={key} onClick={() => handleNavigate(key)} className={getItemClasses(key)} title={isAdminNavLocked(key) ? 'Locked by Super Admin license control' : label} aria-disabled={isAdminNavLocked(key)}><i className={`fas fa-${icon} w-5`}></i><span className="text-sm flex-1">{label}</span>{isAdminNavLocked(key) && <i className="fas fa-lock text-xs"></i>}{key === 'chat' && unreadChatCount > 0 && <span className="min-w-[24px] h-6 px-2 rounded-full bg-red-500 text-white text-xs font-bold inline-flex items-center justify-center">{unreadChatCount > 99 ? '99+' : unreadChatCount}</span>}</button>)}</div>
+        <div className="sidebar-scroll space-y-1 pr-1">{items.map(([key, label, icon]) => <button key={key} onClick={() => handleNavigate(key)} className={getItemClasses(key)} title={isNavLocked(key) ? 'Locked by Super Admin platform or license control' : label} aria-disabled={isNavLocked(key)}><i className={`fas fa-${icon} w-5`}></i><span className="text-sm flex-1">{label}</span>{isNavLocked(key) && <i className="fas fa-lock text-xs"></i>}{key === 'chat' && unreadChatCount > 0 && <span className="min-w-[24px] h-6 px-2 rounded-full bg-red-500 text-white text-xs font-bold inline-flex items-center justify-center">{unreadChatCount > 99 ? '99+' : unreadChatCount}</span>}</button>)}</div>
       </aside>
     </div>
-    <aside className="w-72 bg-white border-r p-4 hidden md:block no-print"><div className="sidebar-scroll"><div className="mb-3 text-xs font-bold uppercase tracking-widest text-slate-400">Navigation</div><div className="space-y-1">{items.map(([key, label, icon]) => <button key={key} onClick={() => handleNavigate(key)} className={getItemClasses(key)} title={isAdminNavLocked(key) ? 'Locked by Super Admin license control' : label} aria-disabled={isAdminNavLocked(key)}><i className={`fas fa-${icon} w-5`}></i><span className="text-sm flex-1">{label}</span>{isAdminNavLocked(key) && <i className="fas fa-lock text-xs"></i>}{key === 'chat' && unreadChatCount > 0 && <span className="min-w-[24px] h-6 px-2 rounded-full bg-red-500 text-white text-xs font-bold inline-flex items-center justify-center">{unreadChatCount > 99 ? '99+' : unreadChatCount}</span>}</button>)}</div></div></aside>
+    <aside className="w-72 bg-white border-r p-4 hidden md:block no-print"><div className="sidebar-scroll"><div className="mb-3 text-xs font-bold uppercase tracking-widest text-slate-400">Navigation</div><div className="space-y-1">{items.map(([key, label, icon]) => <button key={key} onClick={() => handleNavigate(key)} className={getItemClasses(key)} title={isNavLocked(key) ? 'Locked by Super Admin platform or license control' : label} aria-disabled={isNavLocked(key)}><i className={`fas fa-${icon} w-5`}></i><span className="text-sm flex-1">{label}</span>{isNavLocked(key) && <i className="fas fa-lock text-xs"></i>}{key === 'chat' && unreadChatCount > 0 && <span className="min-w-[24px] h-6 px-2 rounded-full bg-red-500 text-white text-xs font-bold inline-flex items-center justify-center">{unreadChatCount > 99 ? '99+' : unreadChatCount}</span>}</button>)}</div></div></aside>
   </>;
 }
 
-function DashboardRouter() { const { session, activeNav } = React.useContext(SessionContext); if (session.role === 'superadmin') return <SuperAdminDashboard activeNav={activeNav} />; if (session.role === 'admin') return <AdminDashboard activeNav={activeNav} />; if (session.role === 'teacher') return <TeacherDashboard activeNav={activeNav} />; if (session.role === 'student') return <StudentDashboard activeNav={activeNav} />; if (session.role === 'parent') return <ParentDashboard activeNav={activeNav} />; if (session.role === 'accountant') return <AccountantDashboard activeNav={activeNav} />; if (session.role === 'principal') return <PrincipalDashboard activeNav={activeNav} />; return null; }
+function PlatformAccessLockedNotice({ role }) {
+  const { data } = React.useContext(DataContext);
+  const license = getLicenseState(data.schoolSettings);
+  const reason = license.expired ? 'The school license has expired.' : (isSuspendedLicense(data.schoolSettings) ? 'Platform access was locked by the Super Admin, so the previous license code cannot be reused.' : 'Platform access is currently locked by the Super Admin.');
+  return <div className="space-y-5">
+    <SectionHeader title={`${ROLE_LABELS[role] || 'User'} Portal Locked`} subtitle="Only login and logout are currently allowed until the School Admin license or platform access is renewed or unlocked." />
+    <LicenseSummaryCard settings={data.schoolSettings} />
+    <div className="card p-5 border border-amber-200 bg-amber-50">
+      <div className="flex items-start gap-3">
+        <div className="w-12 h-12 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0"><i className="fas fa-lock"></i></div>
+        <div>
+          <h3 className="font-extrabold text-lg text-amber-900">Dashboard access is temporarily locked</h3>
+          <p className="text-sm text-amber-800 mt-1">{reason}</p>
+          <p className="text-sm text-amber-800 mt-2">Please contact the School Admin or Super Admin. Your dashboard navigation will remain faded until full access is restored.</p>
+        </div>
+      </div>
+    </div>
+  </div>;
+}
+
+function DashboardRouter() {
+  const { data } = React.useContext(DataContext);
+  const { session, activeNav } = React.useContext(SessionContext);
+  const restricted = isWholeSchoolPortalRestricted(session.role, data.schoolSettings);
+  if (session.role === 'superadmin') return <SuperAdminDashboard activeNav={activeNav} />;
+  if (session.role === 'admin') return <AdminDashboard activeNav={activeNav} />;
+  if (restricted) return <PlatformAccessLockedNotice role={session.role} />;
+  if (session.role === 'teacher') return <TeacherDashboard activeNav={activeNav} />;
+  if (session.role === 'student') return <StudentDashboard activeNav={activeNav} />;
+  if (session.role === 'parent') return <ParentDashboard activeNav={activeNav} />;
+  if (session.role === 'accountant') return <AccountantDashboard activeNav={activeNav} />;
+  if (session.role === 'principal') return <PrincipalDashboard activeNav={activeNav} />;
+  return null;
+}
 
 
 function LicenseStatusBadge({ state }) {
@@ -3542,6 +3589,7 @@ function SchoolAdminLicenseUsage({ lockedMode=false }) {
     const entered = String(codeInput || '').trim().toUpperCase();
     const issued = String(license.code || '').trim().toUpperCase();
     if (!issued) { notify('error', 'No license has been issued yet. Please contact the Super Admin.'); return; }
+    if (isSuspendedLicense(data.schoolSettings)) { notify('error', 'This license code was locked by the Super Admin and cannot be reused. Please contact the Super Admin for a new license.'); return; }
     if (!entered || entered !== issued) { notify('error', 'Invalid license code. Please enter the exact code issued by the Super Admin.'); return; }
     if (license.expired) { notify('error', 'This license has expired. Please contact the Super Admin for renewal.'); return; }
     const nowIso = new Date().toISOString();
@@ -3594,15 +3642,32 @@ function SuperAdminDashboard({ activeNav }) {
   };
   const setAdminLock = async locked => {
     const nowIso = new Date().toISOString();
-    await setSchoolSettings(current => ({
-      ...current,
-      school_admin_access_locked: !!locked,
-      platform_access_locked: !!locked,
-      school_license_status: !locked && current.school_license_code ? 'Active' : (current.school_license_status || defaultSchool.school_license_status),
-      school_license_activated_at: !locked && current.school_license_code ? (current.school_license_activated_at || nowIso) : current.school_license_activated_at,
-      school_license_last_checked_at: nowIso
-    }));
-    notify('success', locked ? 'School Admin platform access has been locked.' : 'School Admin platform access has been unlocked.');
+    await setSchoolSettings(current => {
+      if (locked) {
+        return {
+          ...current,
+          school_admin_access_locked: true,
+          platform_access_locked: true,
+          school_license_status: current.school_license_code ? 'Suspended' : (current.school_license_status || defaultSchool.school_license_status),
+          school_license_activated_at: current.school_license_code ? '' : current.school_license_activated_at,
+          school_license_last_checked_at: nowIso
+        };
+      }
+      const suspended = String(current.school_license_status || '').trim().toLowerCase() === 'suspended';
+      return {
+        ...current,
+        school_admin_access_locked: false,
+        platform_access_locked: false,
+        school_license_plan: suspended ? '' : current.school_license_plan,
+        school_license_label: suspended ? 'No license issued' : current.school_license_label,
+        school_license_code: suspended ? '' : current.school_license_code,
+        school_license_status: suspended ? 'Not Issued' : (current.school_license_code ? 'Active' : (current.school_license_status || defaultSchool.school_license_status)),
+        school_license_activated_at: suspended ? '' : (current.school_license_code ? (current.school_license_activated_at || nowIso) : current.school_license_activated_at),
+        school_license_expires_at: suspended ? '' : current.school_license_expires_at,
+        school_license_last_checked_at: nowIso
+      };
+    });
+    notify('success', locked ? 'School Admin and all issued user portals have been locked. The current license code is suspended and cannot be reused.' : 'School Admin and all issued user portals have been unlocked.');
   };
   const issueLicense = async e => {
     e.preventDefault();
@@ -3631,7 +3696,7 @@ function SuperAdminDashboard({ activeNav }) {
     notify('success', 'School Admin license record cleared.');
   };
   const credentialsPanel = <div className="card p-5 space-y-4"><SectionHeader title="Issue School Admin Credentials" subtitle="Only the Super Admin can issue or reset the School Admin login credentials." actions={<button type="button" onClick={generateAdminCredential} className="btn btn-outline"><i className="fas fa-wand-magic-sparkles mr-2"></i>Generate Unique Credentials</button>} /><form onSubmit={saveSchoolAdminCredential} className="grid md:grid-cols-[1fr_1fr_220px_auto] gap-4 items-end"><Field label="School Admin Username"><input className="input" value={credentialForm.username} onChange={e => setCredentialForm({ ...credentialForm, username: e.target.value })} /></Field><Field label="School Admin Password"><input className="input" value={credentialForm.temporary_password} onChange={e => setCredentialForm({ ...credentialForm, temporary_password: e.target.value })} /></Field><Field label="Force Password Change"><select className="select" value={credentialForm.force_password_change} onChange={e => setCredentialForm({ ...credentialForm, force_password_change: e.target.value })}>{FORCE_PASSWORD_CHANGE.map(x => <option key={x} value={x}>{x}</option>)}</select></Field><button className="btn btn-primary" type="submit">Save Credentials</button></form><div className="flex flex-wrap gap-2"><button className="btn btn-outline" type="button" onClick={resetAdminPassword}><i className="fas fa-key mr-2"></i>Reset School Admin Password Only</button></div><div className="rounded-xl bg-slate-50 border border-slate-200 p-3 text-sm"><b>Current School Admin:</b> {adminCredential.username} <span className="mx-2">•</span> <b>Password:</b> {adminCredential.temporary_password} <span className="mx-2">•</span> <b>Force Password Change:</b> {resolveForcePasswordChoice(adminCredential.force_password_change)}</div></div>;
-  const accessPanel = <div className="card p-5 space-y-4"><SectionHeader title="Platform-Level Access Control" subtitle="Locking access fades and blocks School Admin navigation. Login and logout remain available, while license activation is still available." /><div className="grid-fit"><StatCard label="School Admin Access" value={restricted ? 'Locked' : 'Unlocked'} icon={restricted ? 'lock' : 'unlock'} accent={restricted ? 'rose' : 'emerald'} /><StatCard label="License Status" value={license.status} icon="certificate" accent={license.active ? 'emerald' : 'amber'} /><StatCard label="License Plan" value={license.planLabel} icon="calendar-check" accent="blue" /></div><div className="flex flex-wrap gap-3"><button type="button" className="btn btn-danger" onClick={() => setAdminLock(true)}><i className="fas fa-lock mr-2"></i>Lock School Admin Full Access</button><button type="button" className="btn btn-primary" onClick={() => setAdminLock(false)}><i className="fas fa-unlock mr-2"></i>Unlock School Admin Full Access</button></div></div>;
+  const accessPanel = <div className="card p-5 space-y-4"><SectionHeader title="Platform-Level Access Control" subtitle="Locking access fades and blocks School Admin plus all issued user portal navigation. Login and logout remain available; only the School Admin license activation section remains available." /><div className="grid-fit"><StatCard label="School Admin Access" value={restricted ? 'Locked' : 'Unlocked'} icon={restricted ? 'lock' : 'unlock'} accent={restricted ? 'rose' : 'emerald'} /><StatCard label="License Status" value={license.status} icon="certificate" accent={license.active ? 'emerald' : 'amber'} /><StatCard label="License Plan" value={license.planLabel} icon="calendar-check" accent="blue" /></div><div className="flex flex-wrap gap-3"><button type="button" className="btn btn-danger" onClick={() => setAdminLock(true)}><i className="fas fa-lock mr-2"></i>Lock School Admin Full Access</button><button type="button" className="btn btn-primary" onClick={() => setAdminLock(false)}><i className="fas fa-unlock mr-2"></i>Unlock School Admin Full Access</button></div></div>;
   const licensePanel = <div className="space-y-4"><LicenseSummaryCard settings={data.schoolSettings} /><div className="card p-5 space-y-4"><SectionHeader title="Issue License for School Admin Operation" subtitle="Choose a license plan and generate the code the School Admin must activate under License Plan Usage." /><form onSubmit={issueLicense} className="grid md:grid-cols-[1fr_auto] gap-4 items-end"><Field label="License Plan"><select className="select" value={licensePlan} onChange={e => setLicensePlan(e.target.value)}>{Object.entries(LICENSE_PLAN_OPTIONS).map(([key, plan]) => <option key={key} value={key}>{plan.label}</option>)}</select></Field><button type="submit" className="btn btn-primary"><i className="fas fa-certificate mr-2"></i>Generate and Issue License</button></form><div className="flex flex-wrap gap-2"><button type="button" className="btn btn-outline" onClick={clearLicense}><i className="fas fa-trash mr-2"></i>Clear License</button></div></div></div>;
   if (activeNav === 'schooladmin') return credentialsPanel;
   if (activeNav === 'access') return accessPanel;
