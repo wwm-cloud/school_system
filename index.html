@@ -3533,25 +3533,20 @@ function Sidebar() {
 }
 
 function PlatformAccessLockedNotice({ role }) {
-  const { data } = React.useContext(DataContext);
-  const license = getLicenseState(data.schoolSettings);
-  const reason = license.expired ? 'The school license has expired.' : (isSuspendedLicense(data.schoolSettings) ? 'Platform access was locked by the Super Admin, so the previous license code cannot be reused.' : 'Platform access is currently locked by the Super Admin.');
   return <div className="space-y-5">
-    <SectionHeader title={`${ROLE_LABELS[role] || 'User'} Portal Locked`} subtitle="Only login and logout are currently allowed until the School Admin license or platform access is renewed or unlocked." />
-    <LicenseSummaryCard settings={data.schoolSettings} />
+    <SectionHeader title={`${ROLE_LABELS[role] || 'User'} Portal Locked`} subtitle="Only login and logout are currently allowed until platform access is restored." />
     <div className="card p-5 border border-amber-200 bg-amber-50">
       <div className="flex items-start gap-3">
         <div className="w-12 h-12 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0"><i className="fas fa-lock"></i></div>
         <div>
           <h3 className="font-extrabold text-lg text-amber-900">Dashboard access is temporarily locked</h3>
-          <p className="text-sm text-amber-800 mt-1">{reason}</p>
-          <p className="text-sm text-amber-800 mt-2">Please contact the School Admin or Super Admin. Your dashboard navigation will remain faded until full access is restored.</p>
+          <p className="text-sm text-amber-800 mt-1">Your dashboard navigation is currently restricted by platform access control.</p>
+          <p className="text-sm text-amber-800 mt-2">Please contact the School Admin. Your dashboard navigation will remain faded until full access is restored.</p>
         </div>
       </div>
     </div>
   </div>;
 }
-
 function DashboardRouter() {
   const { data } = React.useContext(DataContext);
   const { session, activeNav } = React.useContext(SessionContext);
