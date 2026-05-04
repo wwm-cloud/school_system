@@ -5090,6 +5090,36 @@ function PrincipalDashboard({ activeNav }) {
     const attendanceOverview = data.attendance.length;
     const performanceOverview = data.grades.filter(g => !!g.is_published).length;
     const activeSignature = getPrincipalSignatureUrl(data.schoolSettings);
+    const assignedClassSummary = safeArray(data.classes)
+      .map(cls => {
+        const assignedTeachers = safeArray(data.teachers).filter(t => safeArray(t.assigned_class_ids).includes(cls.id));
+        return { id: cls.id, name: fullClassName(cls), count: assignedTeachers.length };
+      })
+      .filter(item => item.count > 0)
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+    const unassignedTeacherCount = safeArray(data.teachers).filter(t => !safeArray(t.assigned_class_ids).length).length;
+    const specialtySummary = Object.values(safeArray(data.teachers).reduce((acc, teacher) => {
+      const specialty = (teacher.primary_specialty || 'Not Specified').trim() || 'Not Specified';
+      acc[specialty] = acc[specialty] || { name: specialty, count: 0 };
+      acc[specialty].count += 1;
+      return acc;
+    }, {})).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+    const publishedAcademicUpdates = data.grades.filter(g => !!g.is_published);
+    const academicUpdateAverage = publishedAcademicUpdates.length
+      ? Math.round(publishedAcademicUpdates.reduce((sum, g) => sum + Number(g.total_score || 0), 0) / publishedAcademicUpdates.length)
+      : 0;
+    const academicUpdateSubjects = new Set(publishedAcademicUpdates.map(g => g.subject_id).filter(Boolean)).size;
+    const academicUpdateClasses = new Set(publishedAcademicUpdates.map(g => data.students.find(s => s.id === g.student_id)?.class_id).filter(Boolean)).size;
+    const academicUpdateYear = latestAcademicYearFromGrades(publishedAcademicUpdates);
+    const academicUpdateByClass = safeArray(data.classes)
+      .map(cls => {
+        const classRows = publishedAcademicUpdates.filter(g => data.students.find(s => s.id === g.student_id)?.class_id === cls.id);
+        const classAverage = classRows.length ? Math.round(classRows.reduce((sum, g) => sum + Number(g.total_score || 0), 0) / classRows.length) : 0;
+        return { id: cls.id, name: fullClassName(cls), count: classRows.length, average: classAverage };
+      })
+      .filter(item => item.count > 0)
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
+      .slice(0, 4);
     return <div className="space-y-6">
       <SectionHeader title={`Welcome, ${principal.full_name}`} subtitle="Principal dashboard overview of students, teachers, academic performance, attendance, teacher class assignment summaries, and report signature control." actions={<RoleStatusDot online={data.presence.principal?.online} label="Principal Status" />} />
       <div className="grid-fit">
@@ -5100,14 +5130,81 @@ function PrincipalDashboard({ activeNav }) {
         <StatCard label="Student Performance Overview" value={performanceOverview} icon="chart-line" accent="rose" />
         <StatCard label="Class Academic Performance Summary" value={data.classes.length} icon="layer-group" accent="sky" />
       </div>
-      <div className="grid md:grid-cols-2 gap-4">
+      <div className="grid lg:grid-cols-2 gap-4 items-start">
         <div className="card p-5">
-          <h3 className="font-bold mb-3">Teacher Assign Class and Primary Specialty Summary</h3>
-          <ul className="space-y-2 text-sm">{data.teachers.map(t => <li key={t.id}><b>{t.full_name}</b>, {safeArray(t.assigned_class_ids).map(id => fullClassName(data.classes.find(c => c.id === id))).join(', ')}, {t.primary_specialty}</li>)}</ul>
+          <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3 mb-4">
+            <div>
+              <h3 className="font-bold text-lg">Teacher Assignment Summary</h3>
+              <p className="text-sm text-slate-500">Compact overview of assigned teachers by class and primary specialty.</p>
+            </div>
+            <span className="pill online"><i className="fas fa-chalkboard-user"></i>{data.teachers.length} Teachers</span>
+          </div>
+          <div className="grid md:grid-cols-2 gap-4">
+            <div className="rounded-2xl border border-blue-100 bg-blue-50/70 p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div className="font-bold text-blue-900">Assigned Teachers by Class</div>
+                <span className="text-xs font-bold text-blue-700">{assignedClassSummary.length} Classes</span>
+              </div>
+              <div className="space-y-2 max-h-64 overflow-auto pr-1">
+                {assignedClassSummary.length ? assignedClassSummary.map(item => <div key={item.id} className="flex items-center justify-between gap-3 rounded-xl bg-white border border-blue-100 px-3 py-2">
+                  <span className="text-sm font-semibold text-slate-700 truncate">{item.name}</span>
+                  <span className="pill online">{item.count}</span>
+                </div>) : <div className="text-sm text-slate-500 bg-white border rounded-xl px-3 py-2">No class assignment recorded yet.</div>}
+                {unassignedTeacherCount > 0 && <div className="flex items-center justify-between gap-3 rounded-xl bg-amber-50 border border-amber-200 px-3 py-2">
+                  <span className="text-sm font-semibold text-amber-800">Teachers without assigned class</span>
+                  <span className="pill late">{unassignedTeacherCount}</span>
+                </div>}
+              </div>
+            </div>
+            <div className="rounded-2xl border border-emerald-100 bg-emerald-50/70 p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div className="font-bold text-emerald-900">Primary Specialty Summary</div>
+                <span className="text-xs font-bold text-emerald-700">{specialtySummary.length} Specialties</span>
+              </div>
+              <div className="space-y-2 max-h-64 overflow-auto pr-1">
+                {specialtySummary.length ? specialtySummary.map(item => <div key={item.name} className="flex items-center justify-between gap-3 rounded-xl bg-white border border-emerald-100 px-3 py-2">
+                  <span className="text-sm font-semibold text-slate-700 truncate">{item.name}</span>
+                  <span className="pill online">{item.count}</span>
+                </div>) : <div className="text-sm text-slate-500 bg-white border rounded-xl px-3 py-2">No primary specialty recorded yet.</div>}
+              </div>
+            </div>
+          </div>
         </div>
         <div className="card p-5">
-          <h3 className="font-bold mb-3">Recent Academic Updates</h3>
-          <ul className="space-y-2 text-sm">{data.grades.filter(g => !!g.is_published).slice(0,5).map(g => <li key={g.id}>{data.students.find(s => s.id === g.student_id)?.full_name} received {g.total_score}% in {data.subjects.find(s => s.id === g.subject_id)?.name}.</li>)}</ul>
+          <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3 mb-4">
+            <div>
+              <h3 className="font-bold text-lg">Recent Academic Updates</h3>
+              <p className="text-sm text-slate-500">Professional summary of published academic records without listing student names.</p>
+            </div>
+            <span className="pill online"><i className="fas fa-chart-line"></i>{publishedAcademicUpdates.length} Published</span>
+          </div>
+          <div className="grid sm:grid-cols-2 gap-3">
+            <div className="rounded-2xl border bg-slate-50 p-4">
+              <div className="text-xs uppercase font-bold text-slate-500">Academic Year</div>
+              <div className="text-2xl font-extrabold text-slate-800 mt-1">{academicUpdateYear || 'N/A'}</div>
+            </div>
+            <div className="rounded-2xl border bg-slate-50 p-4">
+              <div className="text-xs uppercase font-bold text-slate-500">Average Score</div>
+              <div className="text-2xl font-extrabold text-slate-800 mt-1">{academicUpdateAverage}%</div>
+            </div>
+            <div className="rounded-2xl border bg-slate-50 p-4">
+              <div className="text-xs uppercase font-bold text-slate-500">Classes Updated</div>
+              <div className="text-2xl font-extrabold text-slate-800 mt-1">{academicUpdateClasses}</div>
+            </div>
+            <div className="rounded-2xl border bg-slate-50 p-4">
+              <div className="text-xs uppercase font-bold text-slate-500">Subjects Updated</div>
+              <div className="text-2xl font-extrabold text-slate-800 mt-1">{academicUpdateSubjects}</div>
+            </div>
+          </div>
+          <div className="mt-4 rounded-2xl border border-indigo-100 bg-indigo-50/70 p-4">
+            <div className="font-bold text-indigo-900 mb-3">Class Update Overview</div>
+            <div className="space-y-2">
+              {academicUpdateByClass.length ? academicUpdateByClass.map(item => <div key={item.id} className="flex items-center justify-between gap-3 rounded-xl bg-white border border-indigo-100 px-3 py-2">
+                <span className="text-sm font-semibold text-slate-700 truncate">{item.name}</span>
+                <span className="text-xs font-bold text-indigo-700">{item.count} records • {item.average}% avg.</span>
+              </div>) : <div className="text-sm text-slate-500 bg-white border rounded-xl px-3 py-2">No published academic updates yet.</div>}
+            </div>
+          </div>
         </div>
       </div>
       <div className="card p-5 space-y-4">
