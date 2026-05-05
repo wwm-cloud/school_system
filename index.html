@@ -4150,6 +4150,27 @@ function SchoolSettingsManager() {
   </div>;
 }
 
+
+function normalizeAssessmentDate(value='') {
+  return value ? String(value) : '';
+}
+function isAssessmentOpen(assessment={}) {
+  const now = new Date();
+  const openOk = !assessment.open_at || new Date(assessment.open_at) <= now;
+  const closeOk = !assessment.close_at || new Date(assessment.close_at) >= now;
+  return openOk && closeOk && String(assessment.status || 'Published') !== 'Closed';
+}
+function assessmentStatusLabel(assessment={}) {
+  const now = new Date();
+  if (assessment.open_at && new Date(assessment.open_at) > now) return 'Scheduled';
+  if (assessment.close_at && new Date(assessment.close_at) < now) return 'Closed';
+  if (String(assessment.status || 'Published') === 'Closed') return 'Closed';
+  return 'Open';
+}
+function formatAssessmentTypeLabel(value='') {
+  return String(value || '').replace('Questions', '').trim() || 'Assessment';
+}
+
 function defaultAssessmentForm(teacher={}) {
   return {
     id: '',
