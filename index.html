@@ -113,6 +113,9 @@ const TERMS = ['Term 1', 'Term 2', 'Term 3'];
 const PAYMENT_METHODS = ['Cash', 'Mobile Money', 'Bank Transfer', 'Cheque'];
 const FORCE_PASSWORD_CHANGE = ['Yes', 'No'];
 const PROMOTION_PASS_MARK_OPTIONS = Array.from({ length: 11 }, (_, index) => String(40 + index));
+const ASSESSMENT_TYPES = ['Objectives Questions', 'Graded Quiz', 'Assignment Questions', 'Discussion Forum Questions'];
+const OBJECTIVE_QUESTION_TYPES = ['MCQ', 'True/False', 'Fill-in-the-Blank', 'Matching'];
+const ASSESSMENT_ALLOWED_FILE_TYPES = ['pdf', 'docx', 'doc', 'jpg', 'jpeg', 'png', 'webp'];
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
 const CHAT_MODES = {
   superadmin: ['Platform Access', 'Licensing'],
@@ -1983,7 +1986,7 @@ function seedData() {
     admin: { online: false, name: 'School Admin' }, teacher: { online: false, name: teacher.full_name }, student: { online: false, name: student1.full_name },
     parent: { online: false, name: parent1.full_name }, accountant: { online: false, name: accountOfficer.full_name }, principal: { online: false, name: principal.full_name }
   };
-  return normalizeCrossModuleConsistency({ schoolSettings: defaultSchool, principals: [principal], teachers: [teacher], students: [student1, student2], parents: [parent1, parent2], accountStaff: [accountOfficer], classes: [classA, classB], subjects: [sub1, sub2], timetable, attendance, grades: [grade], fees: [fee], credentials, chats, presenceRows: [], presence, archiveRecords: [], salaryGrades: [salaryGrade], teacherPayroll: [teacherPayroll], monthlySalaryPayments: [salaryPayment] });
+  return normalizeCrossModuleConsistency({ schoolSettings: defaultSchool, principals: [principal], teachers: [teacher], students: [student1, student2], parents: [parent1, parent2], accountStaff: [accountOfficer], classes: [classA, classB], subjects: [sub1, sub2], timetable, attendance, grades: [grade], fees: [fee], credentials, chats, presenceRows: [], presence, archiveRecords: [], salaryGrades: [salaryGrade], teacherPayroll: [teacherPayroll], monthlySalaryPayments: [salaryPayment], assessments: [], assessmentSubmissions: [] });
 }
 
 const DB_KEY = 'school_management_complete_dataset';
@@ -2114,7 +2117,7 @@ const SessionContext = React.createContext(null);
 
 const EMPTY_LIVE_DATA = {
   schoolSettings: defaultSchool,
-  principals: [], teachers: [], students: [], parents: [], accountStaff: [], classes: [], subjects: [], timetable: [], attendance: [], grades: [], fees: [], termFeeSettings: [], archiveRecords: [], salaryGrades: [], teacherPayroll: [], monthlySalaryPayments: [], credentials: [], chats: [], presenceRows: [],
+  principals: [], teachers: [], students: [], parents: [], accountStaff: [], classes: [], subjects: [], timetable: [], attendance: [], grades: [], fees: [], termFeeSettings: [], archiveRecords: [], salaryGrades: [], teacherPayroll: [], monthlySalaryPayments: [], assessments: [], assessmentSubmissions: [], credentials: [], chats: [], presenceRows: [],
   presence: {
     admin: { online: false, name: 'School Admin' },
     teacher: { online: false, name: 'Teacher' },
@@ -2291,7 +2294,7 @@ async function fetchOptionalTable(table) {
 async function fetchAllSchoolData() {
   if (!supabase) return seedData();
   await ensureSupabaseBrowserSession();
-  const [schoolSettingsRes, profiles, principalsRaw, accountStaffRaw, teachersRaw, studentsRaw, parentsRaw, parentLinksRaw, classAssignmentsRaw, subjectAssignmentsRaw, classes, subjects, timetableRaw, attendanceRaw, gradesRaw, feesRaw, termFeeSettingsRaw, archiveRecordsRaw, salaryGradesRaw, teacherPayrollRaw, monthlySalaryPaymentsRaw, credentialsRawInitial, chatsRaw, presenceRaw] = await Promise.all([
+  const [schoolSettingsRes, profiles, principalsRaw, accountStaffRaw, teachersRaw, studentsRaw, parentsRaw, parentLinksRaw, classAssignmentsRaw, subjectAssignmentsRaw, classes, subjects, timetableRaw, attendanceRaw, gradesRaw, feesRaw, termFeeSettingsRaw, archiveRecordsRaw, salaryGradesRaw, teacherPayrollRaw, monthlySalaryPaymentsRaw, assessmentsRaw, assessmentSubmissionsRaw, credentialsRawInitial, chatsRaw, presenceRaw] = await Promise.all([
     supabase.from('school_settings').select('*').eq('id', 1).single(),
     fetchTable('profiles'),
     fetchTable('principals'),
@@ -2313,6 +2316,8 @@ async function fetchAllSchoolData() {
     fetchOptionalTable('salary_grades'),
     fetchOptionalTable('teacher_payroll_details'),
     fetchOptionalTable('monthly_salary_payments'),
+    fetchOptionalTable('assessments'),
+    fetchOptionalTable('assessment_submissions'),
     fetchTable('user_credentials'),
     fetchTable('chat_messages'),
     fetchTable('presence_status')
@@ -2370,6 +2375,8 @@ async function fetchAllSchoolData() {
     salaryGrades: (salaryGradesRaw || []),
     teacherPayroll: (teacherPayrollRaw || []),
     monthlySalaryPayments: (monthlySalaryPaymentsRaw || []),
+    assessments: safeArray(assessmentsRaw).map(row => ({ ...row, instruction_files: safeArray(row.instruction_files), allowed_file_types: safeArray(row.allowed_file_types), questions: safeArray(row.questions) })),
+    assessmentSubmissions: safeArray(assessmentSubmissionsRaw).map(row => ({ ...row, objective_answers: row.objective_answers || {}, files: safeArray(row.files) })),
     credentials: ensureAdminCredential((credentialsRaw || []).map(row => ({ ...row, force_password_change: toYesNo(row.force_password_change) }))),
     chats: chatsRaw || [],
     presenceRows: presenceRaw || [],
@@ -2598,6 +2605,8 @@ function usePersistentSchoolData() {
       const filteredNext = safeArray(nextItems);
       await syncSimpleTable('user_credentials', filteredPrev, filteredNext, item => ({ id: dbId(item.id), role: item.role, linked_entity_id: item.role === 'admin' ? (dbId(item.linked_entity_id) || ADMIN_LINKED_ENTITY_ID) : (dbId(item.linked_entity_id) || null), username: item.username, temporary_password: item.temporary_password, force_password_change: fromYesNo(item.force_password_change), account_active: item.account_active ?? true }));
     }
+    else if (key === 'assessments') await syncSimpleTable('assessments', prevItems, nextItems, item => ({ id: dbId(item.id), teacher_id: item.teacher_id || null, class_id: item.class_id || null, subject_id: item.subject_id || null, title: item.title || '', assessment_type: item.assessment_type || 'Assignment Questions', objective_question_type: item.objective_question_type || null, description: item.description || null, instructions_text: item.instructions_text || null, instruction_files: clonePlain(safeArray(item.instruction_files)), allowed_file_types: clonePlain(safeArray(item.allowed_file_types)), open_at: item.open_at || null, close_at: item.close_at || null, duration_minutes: Number(item.duration_minutes || 0), randomize_questions: !!item.randomize_questions, attempts_limit: Number(item.attempts_limit || 1), allow_hints: !!item.allow_hints, show_solution_after: !!item.show_solution_after, questions: clonePlain(safeArray(item.questions)), max_score: Number(item.max_score || safeArray(item.questions).length || 0), status: item.status || 'Published', created_at: item.created_at || new Date().toISOString(), updated_at: item.updated_at || new Date().toISOString() }));
+    else if (key === 'assessmentSubmissions') await syncSimpleTable('assessment_submissions', prevItems, nextItems, item => ({ id: dbId(item.id), assessment_id: item.assessment_id, student_id: item.student_id, attempt_no: Number(item.attempt_no || 1), online_text: item.online_text || null, objective_answers: clonePlain(item.objective_answers || {}), files: clonePlain(safeArray(item.files)), status: item.status || 'Draft', saved_at: item.saved_at || null, submitted_at: item.submitted_at || null, auto_score: item.auto_score === '' || item.auto_score === undefined ? null : Number(item.auto_score || 0), score: item.score === '' || item.score === undefined ? null : Number(item.score || 0), max_score: item.max_score === '' || item.max_score === undefined ? null : Number(item.max_score || 0), grade_notes: item.grade_notes || null, graded_at: item.graded_at || null, graded_by: item.graded_by || null, created_at: item.created_at || new Date().toISOString(), updated_at: item.updated_at || new Date().toISOString() }));
     else if (key === 'chats') await syncSimpleTable('chat_messages', prevItems, nextItems, item => ({ id: dbId(item.id), sender_role: item.sender_role, sender_id: item.sender_id || null, receiver_role: item.receiver_role, receiver_id: item.receiver_id || null, message: item.message, is_read: !!item.is_read, deleted_by_sender: !!item.deleted_by_sender, deleted_by_receiver: !!item.deleted_by_receiver, banned: !!item.banned, created_at: item.created_at || new Date().toISOString() }));
   }, []);
 
@@ -3499,8 +3508,8 @@ function Sidebar() {
     let navItems = [];
     if (session.role === 'superadmin') navItems = [['dashboard', 'Dashboard', 'tachometer-alt'], ['schooladmin', 'School Admin Credentials', 'user-shield'], ['access', 'Platform Access Control', 'lock'], ['license', 'License Management', 'certificate']];
     else if (session.role === 'admin') navItems = [['dashboard', 'Dashboard', 'tachometer-alt'], ['license', 'License Plan Usage', 'certificate'], ['principals', 'Principal Management', 'crown'], ['teachers', 'Teachers Management', 'chalkboard-user'], ['students', 'Students Management', 'user-graduate'], ['parents', 'Parents Management', 'users'], ['accountstaff', 'Account Office Staff', 'calculator'], ['classes', 'Classes Management', 'layer-group'], ['subjects', 'Subjects Management', 'book'], ['timetable', 'Timetable Management', 'clock'], ['accounts', 'Accounts & Credentials', 'key'], ['archive', 'Archive Records', 'box-archive'], ['chat', 'System Chat', 'comments'], ['settings', 'School Logo & Details', 'cog']];
-    else if (session.role === 'teacher') navItems = [['dashboard', 'Dashboard', 'tachometer-alt'], ['students', 'Student Management', 'users'], ['attendance', 'Attendance Records', 'calendar-check'], ['grades', 'Grades', 'star'], ['salary', 'Salary Record', 'wallet'], ['timetable', 'Timetable', 'clock'], ['chat', 'System Chat', 'comments'], ['profile', 'My Profile', 'image']];
-    else if (session.role === 'student') navItems = [['dashboard', 'Dashboard', 'tachometer-alt'], ['grades', 'Grades', 'star'], ['attendance', 'Attendance Records', 'calendar'], ['fees', 'Fee Payments', 'money-bill-wave'], ['timetable', 'Timetable', 'clock'], ['chat', 'System Chat', 'comments']];
+    else if (session.role === 'teacher') navItems = [['dashboard', 'Dashboard', 'tachometer-alt'], ['students', 'Student Management', 'users'], ['attendance', 'Attendance Records', 'calendar-check'], ['grades', 'Grades', 'star'], ['assessments', 'Assessment Management', 'clipboard-list'], ['salary', 'Salary Record', 'wallet'], ['timetable', 'Timetable', 'clock'], ['chat', 'System Chat', 'comments'], ['profile', 'My Profile', 'image']];
+    else if (session.role === 'student') navItems = [['dashboard', 'Dashboard', 'tachometer-alt'], ['grades', 'Grades', 'star'], ['attendance', 'Attendance Records', 'calendar'], ['fees', 'Fee Payments', 'money-bill-wave'], ['assessments', 'Assessments', 'file-lines'], ['timetable', 'Timetable', 'clock'], ['chat', 'System Chat', 'comments']];
     else if (session.role === 'parent') navItems = [['dashboard', 'Dashboard', 'tachometer-alt'], ['grades', 'Grades', 'star'], ['attendance', 'Attendance Records', 'calendar'], ['fees', 'Fee Payments', 'money-bill-wave'], ['chat', 'System Chat', 'comments']];
     else if (session.role === 'accountant') navItems = [['dashboard', 'Dashboard', 'tachometer-alt'], ['fees', 'Fee Payments', 'hand-holding-usd'], ['payroll', 'Teacher Salary Structure', 'wallet'], ['statements', 'Fees Statement', 'file-invoice'], ['parentcontacts', 'Parent Contacts', 'address-book'], ['gradelock', 'Grades Lock Control', 'lock']];
     else if (session.role === 'principal') navItems = [['dashboard', 'Dashboard', 'tachometer-alt'], ['students', 'Student Management', 'user-graduate'], ['teachers', 'Teacher Management', 'chalkboard-user'], ['academic', 'Academic Performance', 'chart-line'], ['attendance', 'Attendance Summary', 'calendar-alt'], ['chat', 'System Chat', 'comments']];
@@ -4141,12 +4150,212 @@ function SchoolSettingsManager() {
   </div>;
 }
 
+function defaultAssessmentForm(teacher={}) {
+  return {
+    id: '',
+    teacher_id: teacher?.id || '',
+    class_id: safeArray(teacher?.assigned_class_ids)[0] || '',
+    subject_id: safeArray(teacher?.assigned_subject_ids)[0] || '',
+    title: '',
+    assessment_type: 'Assignment Questions',
+    objective_question_type: 'MCQ',
+    description: '',
+    instructions_text: '',
+    instruction_files: [],
+    allowed_file_types: ['pdf', 'docx', 'jpg', 'png'],
+    open_at: '',
+    close_at: '',
+    duration_minutes: '',
+    randomize_questions: false,
+    attempts_limit: 1,
+    allow_hints: true,
+    show_solution_after: true,
+    questions: [],
+    max_score: 0,
+    status: 'Published',
+    created_at: ''
+  };
+}
+function defaultQuestionForm(type='MCQ') {
+  return { id: '', question_text: '', question_type: type || 'MCQ', option_a: '', option_b: '', option_c: '', option_d: '', correct_answer: '', hint: '', solution: '', left_items: '', right_items: '' };
+}
+function normalizeAssessmentQuestion(form={}) {
+  const type = form.question_type || 'MCQ';
+  const options = type === 'MCQ' ? [form.option_a, form.option_b, form.option_c, form.option_d].map(x => String(x || '').trim()).filter(Boolean) : [];
+  const matching_pairs = type === 'Matching' ? String(form.left_items || '').split('\n').map((left, index) => ({ left: left.trim(), right: String(form.right_items || '').split('\n')[index]?.trim() || '' })).filter(pair => pair.left || pair.right) : [];
+  return { id: form.id || uid(), question_text: String(form.question_text || '').trim(), question_type: type, options, correct_answer: String(form.correct_answer || '').trim(), hint: form.hint || '', solution: form.solution || '', matching_pairs };
+}
+function calculateObjectiveScore(assessment={}, answers={}) {
+  const questions = safeArray(assessment.questions);
+  if (!questions.length) return { score: 0, max: 0 };
+  let score = 0;
+  questions.forEach(question => {
+    const given = String(answers?.[question.id] || '').trim().toLowerCase();
+    const correct = String(question.correct_answer || '').trim().toLowerCase();
+    if (given && correct && given === correct) score += 1;
+  });
+  return { score, max: questions.length };
+}
+function readFilesAsAssessmentPayload(fileList) {
+  const files = Array.from(fileList || []);
+  return Promise.all(files.map(file => new Promise(resolve => {
+    const reader = new FileReader();
+    reader.onload = () => resolve({ name: file.name, type: file.type, size: file.size, data_url: reader.result, uploaded_at: new Date().toISOString() });
+    reader.onerror = () => resolve({ name: file.name, type: file.type, size: file.size, data_url: '', uploaded_at: new Date().toISOString() });
+    reader.readAsDataURL(file);
+  })));
+}
+function assessmentStudentName(data, studentId) {
+  return data.students.find(st => st.id === studentId)?.full_name || 'Student';
+}
+function assessmentClassName(data, classId) {
+  return fullClassName(data.classes.find(cls => cls.id === classId)) || 'No class selected';
+}
+function assessmentSubjectName(data, subjectId) {
+  return data.subjects.find(subject => subject.id === subjectId)?.name || 'No subject selected';
+}
+function AssessmentFileLinks({ files=[] }) {
+  const rows = safeArray(files);
+  if (!rows.length) return <span className="text-slate-400 text-xs">No file</span>;
+  return <div className="flex flex-wrap gap-2">{rows.map((file, index) => <a key={`${file.name}-${index}`} className="pill bg-slate-100 text-slate-700 border border-slate-200" href={file.data_url || '#'} download={file.name || `file-${index + 1}`} target="_blank" rel="noreferrer"><i className="fas fa-paperclip"></i>{file.name || `File ${index + 1}`}</a>)}</div>;
+}
+function AssessmentAvailabilityBadge({ assessment }) {
+  const status = assessmentStatusLabel(assessment);
+  const cls = status === 'Open' ? 'online' : (status === 'Scheduled' ? 'late' : 'offline');
+  return <span className={`pill ${cls}`}>{status}</span>;
+}
+function TeacherAssessmentManagement({ teacher }) {
+  const { data, updateCollection, notify } = React.useContext(DataContext);
+  const teacherClasses = data.classes.filter(cls => safeArray(teacher.assigned_class_ids).includes(cls.id));
+  const teacherSubjects = data.subjects.filter(subject => safeArray(teacher.assigned_subject_ids).includes(subject.id));
+  const [open, setOpen] = React.useState(false);
+  const [form, setForm] = React.useState(defaultAssessmentForm(teacher));
+  const [questionForm, setQuestionForm] = React.useState(defaultQuestionForm('MCQ'));
+  const [selectedId, setSelectedId] = React.useState('');
+  const teacherAssessments = safeArray(data.assessments).filter(item => item.teacher_id === teacher.id).sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
+  const selectedAssessment = teacherAssessments.find(item => item.id === selectedId) || teacherAssessments[0] || null;
+  const selectedSubmissions = selectedAssessment ? safeArray(data.assessmentSubmissions).filter(row => row.assessment_id === selectedAssessment.id).sort((a, b) => String(b.submitted_at || b.saved_at || '').localeCompare(String(a.submitted_at || a.saved_at || ''))) : [];
+  const resetForm = () => { setForm(defaultAssessmentForm(teacher)); setQuestionForm(defaultQuestionForm('MCQ')); };
+  const openNew = () => { resetForm(); setOpen(true); };
+  const editAssessment = row => { setForm({ ...defaultAssessmentForm(teacher), ...row, questions: safeArray(row.questions), instruction_files: safeArray(row.instruction_files), allowed_file_types: safeArray(row.allowed_file_types) }); setQuestionForm(defaultQuestionForm(row.objective_question_type || 'MCQ')); setOpen(true); };
+  const addQuestion = () => {
+    const question = normalizeAssessmentQuestion({ ...questionForm, question_type: form.objective_question_type });
+    if (!question.question_text) { notify('error', 'Enter the question text before adding it.'); return; }
+    if ((form.assessment_type === 'Objectives Questions' || form.assessment_type === 'Graded Quiz') && !question.correct_answer && question.question_type !== 'Matching') { notify('error', 'Enter the correct answer for auto grading.'); return; }
+    setForm(current => ({ ...current, questions: [...safeArray(current.questions), question], max_score: safeArray(current.questions).length + 1 }));
+    setQuestionForm(defaultQuestionForm(form.objective_question_type));
+  };
+  const removeQuestion = id => setForm(current => ({ ...current, questions: safeArray(current.questions).filter(q => q.id !== id), max_score: Math.max(0, safeArray(current.questions).length - 1) }));
+  const save = async e => {
+    e.preventDefault();
+    const payload = {
+      ...form,
+      id: form.id || uid(),
+      teacher_id: teacher.id,
+      class_id: form.class_id || safeArray(teacher.assigned_class_ids)[0] || '',
+      subject_id: form.subject_id || safeArray(teacher.assigned_subject_ids)[0] || '',
+      title: String(form.title || '').trim(),
+      assessment_type: form.assessment_type || 'Assignment Questions',
+      objective_question_type: form.assessment_type === 'Objectives Questions' || form.assessment_type === 'Graded Quiz' ? form.objective_question_type : '',
+      duration_minutes: Number(form.duration_minutes || 0),
+      attempts_limit: Math.max(1, Number(form.attempts_limit || 1)),
+      max_score: form.assessment_type === 'Objectives Questions' || form.assessment_type === 'Graded Quiz' ? safeArray(form.questions).length : Number(form.max_score || 100),
+      questions: safeArray(form.questions),
+      instruction_files: safeArray(form.instruction_files),
+      allowed_file_types: safeArray(form.allowed_file_types),
+      created_at: form.created_at || new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      status: form.status || 'Published'
+    };
+    if (!payload.title) { notify('error', 'Assessment title is required.'); return; }
+    if (!payload.class_id || !payload.subject_id) { notify('error', 'Select class and subject.'); return; }
+    await updateCollection('assessments', items => items.some(item => item.id === payload.id) ? items.map(item => item.id === payload.id ? payload : item) : [payload, ...items], { successMessage: 'Assessment saved successfully.' });
+    setSelectedId(payload.id);
+    setOpen(false);
+  };
+  const removeAssessment = async row => {
+    if (!confirmDeleteAction('this assessment and all its submissions')) return;
+    await updateCollection('assessmentSubmissions', items => items.filter(item => item.assessment_id !== row.id), { silentSuccess: true });
+    await updateCollection('assessments', items => items.filter(item => item.id !== row.id), { successMessage: 'Assessment deleted successfully.' });
+    if (selectedId === row.id) setSelectedId('');
+  };
+  const gradeSubmission = async row => {
+    const rawScore = window.prompt('Enter score for this submission:', row.score ?? row.auto_score ?? '');
+    if (rawScore === null) return;
+    const score = Number(rawScore || 0);
+    if (!Number.isFinite(score)) { notify('error', 'Score must be numeric.'); return; }
+    const notes = window.prompt('Optional feedback or grading notes:', row.grade_notes || '') ?? (row.grade_notes || '');
+    await updateCollection('assessmentSubmissions', items => items.map(item => item.id === row.id ? { ...item, score, max_score: item.max_score || selectedAssessment?.max_score || 100, grade_notes: notes, status: 'Graded', graded_at: new Date().toISOString(), graded_by: teacher.id, updated_at: new Date().toISOString() } : item), { successMessage: 'Submission graded successfully.' });
+  };
+  const stats = { total: teacherAssessments.length, open: teacherAssessments.filter(isAssessmentOpen).length, submissions: safeArray(data.assessmentSubmissions).filter(row => teacherAssessments.some(a => a.id === row.assessment_id) && row.status !== 'Draft').length };
+  return <div className="space-y-5">
+    <SectionHeader title="Teacher Assessment Management" subtitle="Create objective questions, timed quizzes, assignments, and discussion forums with deadlines and organized submission folders." actions={<button className="btn btn-primary" onClick={openNew}><i className="fas fa-plus mr-2"></i>Create Assessment</button>} />
+    <div className="grid-fit"><StatCard label="Assessments Created" value={stats.total} icon="clipboard-list" accent="blue" /><StatCard label="Currently Open" value={stats.open} icon="door-open" accent="emerald" /><StatCard label="Student Submissions" value={stats.submissions} icon="folder-open" accent="amber" /></div>
+    <div className="grid lg:grid-cols-[1.05fr_.95fr] gap-4">
+      <div className="card p-4"><div className="flex items-center justify-between mb-3"><h3 className="font-bold text-lg">Assessment Dashboard</h3><span className="pill bg-blue-50 text-blue-700">By creation date and deadline</span></div><div className="space-y-3 max-h-[640px] overflow-auto pr-1">{teacherAssessments.length ? teacherAssessments.map(item => <button key={item.id} onClick={() => setSelectedId(item.id)} className={`w-full text-left rounded-2xl border p-4 transition ${selectedAssessment?.id === item.id ? 'border-emerald-300 bg-emerald-50' : 'border-slate-200 bg-white hover:bg-slate-50'}`}><div className="flex flex-wrap items-start justify-between gap-2"><div><div className="font-bold text-slate-900">{item.title}</div><div className="text-xs text-slate-500 mt-1">{formatAssessmentTypeLabel(item.assessment_type)} • {assessmentClassName(data, item.class_id)} • {assessmentSubjectName(data, item.subject_id)}</div></div><AssessmentAvailabilityBadge assessment={item} /></div><div className="grid grid-cols-2 gap-2 mt-3 text-xs text-slate-600"><div><b>Created:</b> {formatDateTime(item.created_at)}</div><div><b>Deadline:</b> {item.close_at ? formatDateTime(item.close_at) : 'No closing date'}</div><div><b>Open:</b> {item.open_at ? formatDateTime(item.open_at) : 'Immediate'}</div><div><b>Submissions:</b> {safeArray(data.assessmentSubmissions).filter(row => row.assessment_id === item.id && row.status !== 'Draft').length}</div></div></button>) : <EmptyState text="No assessments created yet." />}</div></div>
+      <div className="card p-4"><div className="flex items-start justify-between gap-3 mb-3"><div><h3 className="font-bold text-lg">Submission Folder View</h3><p className="text-sm text-slate-500">Submissions are organized by student name and submission time.</p></div>{selectedAssessment && <button className="btn btn-outline" onClick={() => editAssessment(selectedAssessment)}>Edit</button>}</div>{selectedAssessment ? <><div className="rounded-2xl bg-slate-50 border border-slate-200 p-3 mb-3"><div className="font-bold">{selectedAssessment.title}</div><div className="text-xs text-slate-500 mt-1">{assessmentClassName(data, selectedAssessment.class_id)} • {assessmentSubjectName(data, selectedAssessment.subject_id)} • {selectedAssessment.close_at ? `Closes ${formatDateTime(selectedAssessment.close_at)}` : 'No closing date'}</div><div className="flex gap-2 mt-3"><button className="btn btn-outline" onClick={() => editAssessment(selectedAssessment)}>Edit</button><button className="btn btn-danger" onClick={() => removeAssessment(selectedAssessment)}>Delete</button></div></div><div className="space-y-2 max-h-[540px] overflow-auto pr-1">{selectedSubmissions.length ? selectedSubmissions.map(row => <div key={row.id} className="rounded-2xl border border-slate-200 p-3 bg-white"><div className="flex flex-wrap items-start justify-between gap-2"><div><div className="font-bold text-sm">{assessmentStudentName(data, row.student_id)}</div><div className="text-xs text-slate-500">{row.status} • Attempt {row.attempt_no || 1} • {formatDateTime(row.submitted_at || row.saved_at)}</div></div><span className="pill bg-slate-100 text-slate-700">Score: {row.score ?? row.auto_score ?? '-'} / {row.max_score || selectedAssessment.max_score || '-'}</span></div>{row.online_text && <div className="mt-2 text-sm bg-slate-50 border border-slate-100 rounded-xl p-2 whitespace-pre-wrap">{row.online_text}</div>}<div className="mt-2"><AssessmentFileLinks files={row.files} /></div>{row.grade_notes && <div className="mt-2 text-xs text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-xl p-2"><b>Feedback:</b> {row.grade_notes}</div>}<div className="mt-2 flex justify-end"><button className="btn btn-outline" onClick={() => gradeSubmission(row)}>Grade / Update Score</button></div></div>) : <EmptyState text="No submissions for this assessment yet." />}</div></> : <EmptyState text="Select an assessment to view its submission folder." />}</div>
+    </div>
+    <Modal open={open} onClose={() => setOpen(false)} title={form.id ? 'Edit Assessment' : 'Create Assessment'} max="max-w-6xl"><form onSubmit={save} className="space-y-4"><div className="grid md:grid-cols-2 gap-4"><Field label="Assessment Title"><input className="input" required value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} /></Field><Field label="Assessment Type"><select className="select" value={form.assessment_type} onChange={e => setForm({ ...form, assessment_type: e.target.value, objective_question_type: e.target.value === 'Graded Quiz' ? 'MCQ' : form.objective_question_type })}>{ASSESSMENT_TYPES.map(type => <option key={type}>{type}</option>)}</select></Field><Field label="Class"><select className="select" required value={form.class_id} onChange={e => setForm({ ...form, class_id: e.target.value })}><option value="">Select class</option>{teacherClasses.map(cls => <option key={cls.id} value={cls.id}>{fullClassName(cls)}</option>)}</select></Field><Field label="Subject"><select className="select" required value={form.subject_id} onChange={e => setForm({ ...form, subject_id: e.target.value })}><option value="">Select subject</option>{teacherSubjects.map(subject => <option key={subject.id} value={subject.id}>{subject.name}</option>)}</select></Field><Field label="Opening Date and Time"><input type="datetime-local" className="input" value={form.open_at || ''} onChange={e => setForm({ ...form, open_at: e.target.value })} /></Field><Field label="Closing Date and Time"><input type="datetime-local" className="input" value={form.close_at || ''} onChange={e => setForm({ ...form, close_at: e.target.value })} /></Field><Field label="Status"><select className="select" value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}><option>Published</option><option>Draft</option><option>Closed</option></select></Field><Field label="Maximum Score"><input type="number" className="input" value={form.max_score || ''} onChange={e => setForm({ ...form, max_score: e.target.value })} /></Field></div><Field label="Description / Instructions"><textarea className="textarea" rows="3" value={form.instructions_text || ''} onChange={e => setForm({ ...form, instructions_text: e.target.value })}></textarea></Field>{(form.assessment_type === 'Assignment Questions') && <div className="rounded-2xl border border-slate-200 p-4"><div className="font-bold mb-3">Assignment File Instructions and Allowed Submission Types</div><input type="file" className="input" multiple onChange={async e => setForm({ ...form, instruction_files: [...safeArray(form.instruction_files), ...(await readFilesAsAssessmentPayload(e.target.files))] })} /><div className="mt-3"><AssessmentFileLinks files={form.instruction_files} /></div><MultiCheckbox label="Allowed Student Submission File Types" items={ASSESSMENT_ALLOWED_FILE_TYPES.map(type => ({ id: type, name: `.${type}` }))} value={form.allowed_file_types} onChange={v => setForm({ ...form, allowed_file_types: v })} getLabel={item => item.name} /></div>}{(form.assessment_type === 'Objectives Questions' || form.assessment_type === 'Graded Quiz') && <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4 space-y-4"><div className="grid md:grid-cols-4 gap-4"><Field label="Question Type"><select className="select" value={form.objective_question_type} onChange={e => { setForm({ ...form, objective_question_type: e.target.value }); setQuestionForm(defaultQuestionForm(e.target.value)); }}>{OBJECTIVE_QUESTION_TYPES.map(type => <option key={type}>{type}</option>)}</select></Field>{form.assessment_type === 'Graded Quiz' && <><Field label="Duration Minutes"><input type="number" className="input" value={form.duration_minutes || ''} onChange={e => setForm({ ...form, duration_minutes: e.target.value })} /></Field><Field label="Attempts Limit"><input type="number" min="1" className="input" value={form.attempts_limit || 1} onChange={e => setForm({ ...form, attempts_limit: e.target.value })} /></Field><Field label="Randomize Questions"><select className="select" value={form.randomize_questions ? 'Yes' : 'No'} onChange={e => setForm({ ...form, randomize_questions: e.target.value === 'Yes' })}><option>Yes</option><option>No</option></select></Field></>}</div><div className="grid md:grid-cols-2 gap-3"><Field label="Question Text"><textarea className="textarea" rows="3" value={questionForm.question_text} onChange={e => setQuestionForm({ ...questionForm, question_text: e.target.value })}></textarea></Field><div className="space-y-3">{form.objective_question_type === 'MCQ' && <div className="grid grid-cols-2 gap-2"><input className="input" placeholder="Option A" value={questionForm.option_a} onChange={e => setQuestionForm({ ...questionForm, option_a: e.target.value })} /><input className="input" placeholder="Option B" value={questionForm.option_b} onChange={e => setQuestionForm({ ...questionForm, option_b: e.target.value })} /><input className="input" placeholder="Option C" value={questionForm.option_c} onChange={e => setQuestionForm({ ...questionForm, option_c: e.target.value })} /><input className="input" placeholder="Option D" value={questionForm.option_d} onChange={e => setQuestionForm({ ...questionForm, option_d: e.target.value })} /></div>}{form.objective_question_type === 'True/False' && <select className="select" value={questionForm.correct_answer} onChange={e => setQuestionForm({ ...questionForm, correct_answer: e.target.value })}><option value="">Select correct answer</option><option>True</option><option>False</option></select>}{form.objective_question_type === 'Matching' && <div className="grid grid-cols-2 gap-2"><textarea className="textarea" placeholder="Left items, one per line" value={questionForm.left_items} onChange={e => setQuestionForm({ ...questionForm, left_items: e.target.value })}></textarea><textarea className="textarea" placeholder="Right items, one per line" value={questionForm.right_items} onChange={e => setQuestionForm({ ...questionForm, right_items: e.target.value })}></textarea></div>}{form.objective_question_type !== 'True/False' && <input className="input" placeholder="Correct answer for auto grading" value={questionForm.correct_answer} onChange={e => setQuestionForm({ ...questionForm, correct_answer: e.target.value })} />}<input className="input" placeholder="Hint" value={questionForm.hint} onChange={e => setQuestionForm({ ...questionForm, hint: e.target.value })} /><input className="input" placeholder="Solution shown after completion" value={questionForm.solution} onChange={e => setQuestionForm({ ...questionForm, solution: e.target.value })} /><button type="button" className="btn btn-outline" onClick={addQuestion}>Add Question</button></div></div><div className="space-y-2">{safeArray(form.questions).map((question, index) => <div key={question.id} className="rounded-xl bg-white border border-blue-100 p-3 flex justify-between gap-3"><div><div className="font-semibold text-sm">Q{index + 1}. {question.question_text}</div><div className="text-xs text-slate-500">{question.question_type} • Answer: {question.correct_answer || 'Matching pairs'}</div></div><button type="button" className="text-red-600 font-bold" onClick={() => removeQuestion(question.id)}>Remove</button></div>)}</div></div>} {form.assessment_type === 'Discussion Forum Questions' && <div className="rounded-2xl bg-purple-50 border border-purple-100 p-4 text-sm text-purple-900">Students will reply with text contributions. Teachers can review and grade each discussion contribution from the submission folder view.</div>}<div className="flex justify-end gap-2"><button type="button" className="btn btn-secondary" onClick={() => setOpen(false)}>Cancel</button><button type="submit" className="btn btn-primary">Save Assessment</button></div></form></Modal>
+  </div>;
+}
+function StudentSubmissionModule({ student }) {
+  const { data, updateCollection, notify } = React.useContext(DataContext);
+  const [selectedId, setSelectedId] = React.useState('');
+  const [onlineText, setOnlineText] = React.useState('');
+  const [objectiveAnswers, setObjectiveAnswers] = React.useState({});
+  const [files, setFiles] = React.useState([]);
+  const assessments = safeArray(data.assessments).filter(item => item.class_id === student.class_id && String(item.status || 'Published') !== 'Draft').sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
+  const selectedAssessment = assessments.find(item => item.id === selectedId) || assessments[0] || null;
+  const currentSubmission = selectedAssessment ? safeArray(data.assessmentSubmissions).filter(row => row.assessment_id === selectedAssessment.id && row.student_id === student.id).sort((a, b) => Number(b.attempt_no || 1) - Number(a.attempt_no || 1))[0] : null;
+  React.useEffect(() => {
+    if (!selectedAssessment) return;
+    const sub = safeArray(data.assessmentSubmissions).filter(row => row.assessment_id === selectedAssessment.id && row.student_id === student.id).sort((a, b) => Number(b.attempt_no || 1) - Number(a.attempt_no || 1))[0];
+    setOnlineText(sub?.online_text || '');
+    setObjectiveAnswers(sub?.objective_answers || {});
+    setFiles(safeArray(sub?.files));
+  }, [selectedAssessment?.id, data.assessmentSubmissions.length]);
+  const countSubmittedAttempts = assessmentId => safeArray(data.assessmentSubmissions).filter(row => row.assessment_id === assessmentId && row.student_id === student.id && row.status !== 'Draft').length;
+  const saveSubmission = async (status='Draft') => {
+    if (!selectedAssessment) return;
+    const submittedAttempts = countSubmittedAttempts(selectedAssessment.id);
+    const allowedAttempts = Math.max(1, Number(selectedAssessment.attempts_limit || 1));
+    if (status !== 'Draft' && submittedAttempts >= allowedAttempts && (!currentSubmission || currentSubmission.status !== 'Draft')) { notify('error', 'You have reached the attempt limit for this assessment.'); return; }
+    if (status !== 'Draft' && !isAssessmentOpen(selectedAssessment)) { notify('error', 'This assessment is not currently open for submission.'); return; }
+    const objectiveMode = selectedAssessment.assessment_type === 'Objectives Questions' || selectedAssessment.assessment_type === 'Graded Quiz';
+    const scoreData = objectiveMode && status !== 'Draft' ? calculateObjectiveScore(selectedAssessment, objectiveAnswers) : { score: currentSubmission?.auto_score ?? '', max: selectedAssessment.max_score || 0 };
+    const payload = {
+      id: currentSubmission?.id || uid(),
+      assessment_id: selectedAssessment.id,
+      student_id: student.id,
+      attempt_no: currentSubmission?.attempt_no || submittedAttempts + 1,
+      online_text: onlineText,
+      objective_answers: objectiveAnswers,
+      files,
+      status: status === 'Draft' ? 'Draft' : (objectiveMode ? 'Submitted' : 'Submitted'),
+      saved_at: new Date().toISOString(),
+      submitted_at: status === 'Draft' ? (currentSubmission?.submitted_at || '') : new Date().toISOString(),
+      auto_score: objectiveMode && status !== 'Draft' ? scoreData.score : currentSubmission?.auto_score ?? '',
+      score: currentSubmission?.score ?? (objectiveMode && status !== 'Draft' ? scoreData.score : ''),
+      max_score: objectiveMode ? scoreData.max : (selectedAssessment.max_score || ''),
+      grade_notes: currentSubmission?.grade_notes || '',
+      graded_at: currentSubmission?.graded_at || '',
+      graded_by: currentSubmission?.graded_by || '',
+      created_at: currentSubmission?.created_at || new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+    await updateCollection('assessmentSubmissions', items => items.some(item => item.id === payload.id) ? items.map(item => item.id === payload.id ? payload : item) : [payload, ...items], { successMessage: status === 'Draft' ? 'Draft saved successfully.' : 'Assessment submitted successfully.' });
+  };
+  const questions = selectedAssessment?.randomize_questions ? [...safeArray(selectedAssessment.questions)].sort(() => Math.random() - 0.5) : safeArray(selectedAssessment?.questions);
+  return <div className="space-y-5"><SectionHeader title="Student Submission Module" subtitle="Open assigned assessments, add submissions, type online answers, upload supporting files, save drafts, and submit final work." /><div className="grid lg:grid-cols-[.9fr_1.1fr] gap-4"><div className="card p-4"><div className="font-bold text-lg mb-3">Available Assessments</div><div className="space-y-3 max-h-[650px] overflow-auto pr-1">{assessments.length ? assessments.map(item => { const submission = safeArray(data.assessmentSubmissions).find(row => row.assessment_id === item.id && row.student_id === student.id && row.status !== 'Draft'); return <button key={item.id} onClick={() => setSelectedId(item.id)} className={`w-full text-left rounded-2xl border p-4 ${selectedAssessment?.id === item.id ? 'bg-emerald-50 border-emerald-300' : 'bg-white border-slate-200 hover:bg-slate-50'}`}><div className="flex justify-between gap-2"><div><div className="font-bold text-slate-900">{item.title}</div><div className="text-xs text-slate-500 mt-1">{formatAssessmentTypeLabel(item.assessment_type)} • {assessmentSubjectName(data, item.subject_id)}</div></div><AssessmentAvailabilityBadge assessment={item} /></div><div className="grid grid-cols-2 gap-2 mt-3 text-xs text-slate-600"><div><b>Open:</b> {item.open_at ? formatDateTime(item.open_at) : 'Immediate'}</div><div><b>Deadline:</b> {item.close_at ? formatDateTime(item.close_at) : 'No deadline'}</div><div><b>Attempts:</b> {countSubmittedAttempts(item.id)} / {item.attempts_limit || 1}</div><div><b>Status:</b> {submission ? submission.status : 'Not submitted'}</div></div></button>; }) : <EmptyState text="No assessments assigned to your class yet." />}</div></div><div className="card p-4">{selectedAssessment ? <div className="space-y-4"><div className="rounded-2xl bg-slate-50 border border-slate-200 p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="text-xs font-bold uppercase tracking-widest text-slate-400">Selected Assessment</div><div className="font-bold text-xl text-slate-900">{selectedAssessment.title}</div><div className="text-sm text-slate-500 mt-1">{assessmentSubjectName(data, selectedAssessment.subject_id)} • {formatAssessmentTypeLabel(selectedAssessment.assessment_type)}</div></div><AssessmentAvailabilityBadge assessment={selectedAssessment} /></div>{selectedAssessment.instructions_text && <div className="mt-3 text-sm whitespace-pre-wrap">{selectedAssessment.instructions_text}</div>}<div className="mt-3"><AssessmentFileLinks files={selectedAssessment.instruction_files} /></div></div>{(selectedAssessment.assessment_type === 'Objectives Questions' || selectedAssessment.assessment_type === 'Graded Quiz') ? <div className="space-y-3">{questions.map((question, index) => <div key={question.id} className="rounded-2xl border border-slate-200 p-4"><div className="font-bold text-sm mb-2">Q{index + 1}. {question.question_text}</div>{question.hint && selectedAssessment.allow_hints && <div className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-xl p-2 mb-2"><b>Hint:</b> {question.hint}</div>}{question.question_type === 'MCQ' && <div className="space-y-2">{safeArray(question.options).map(option => <label key={option} className="flex items-center gap-2 text-sm"><input type="radio" name={question.id} checked={objectiveAnswers[question.id] === option} onChange={() => setObjectiveAnswers({ ...objectiveAnswers, [question.id]: option })} /> {option}</label>)}</div>}{question.question_type === 'True/False' && <select className="select" value={objectiveAnswers[question.id] || ''} onChange={e => setObjectiveAnswers({ ...objectiveAnswers, [question.id]: e.target.value })}><option value="">Select answer</option><option>True</option><option>False</option></select>}{question.question_type === 'Fill-in-the-Blank' && <input className="input" value={objectiveAnswers[question.id] || ''} onChange={e => setObjectiveAnswers({ ...objectiveAnswers, [question.id]: e.target.value })} placeholder="Type your answer" />}{question.question_type === 'Matching' && <textarea className="textarea" value={objectiveAnswers[question.id] || ''} onChange={e => setObjectiveAnswers({ ...objectiveAnswers, [question.id]: e.target.value })} placeholder="Type your matching answers"></textarea>}{currentSubmission?.status !== 'Draft' && selectedAssessment.show_solution_after && question.solution && <div className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-xl p-2 mt-2"><b>Solution:</b> {question.solution}</div>}</div>)}</div> : <div className="space-y-4"><Field label={selectedAssessment.assessment_type === 'Discussion Forum Questions' ? 'Discussion Contribution' : 'Online Text Answer'}><textarea className="textarea" rows="8" value={onlineText} onChange={e => setOnlineText(e.target.value)} placeholder="Type your answer here. You may also upload supporting files below."></textarea></Field><Field label="Upload Supporting Files"><input type="file" className="input" multiple onChange={async e => setFiles([...files, ...(await readFilesAsAssessmentPayload(e.target.files))])} /></Field><AssessmentFileLinks files={files} /></div>}<div className="rounded-2xl bg-blue-50 border border-blue-100 text-blue-900 p-3 text-sm">Workflow: click Add Submission, type your answer or upload files, then Save Changes as draft or Submit Assignment as final work.</div>{currentSubmission?.status === 'Graded' && <div className="rounded-2xl bg-emerald-50 border border-emerald-100 text-emerald-800 p-3 text-sm"><b>Score:</b> {currentSubmission.score ?? currentSubmission.auto_score} / {currentSubmission.max_score || selectedAssessment.max_score || '-'}<br />{currentSubmission.grade_notes && <><b>Feedback:</b> {currentSubmission.grade_notes}</>}</div>}<div className="flex flex-wrap justify-end gap-2"><button className="btn btn-outline" onClick={() => saveSubmission('Draft')}><i className="fas fa-save mr-2"></i>Save Changes</button><button className="btn btn-primary" onClick={() => saveSubmission('Submitted')}><i className="fas fa-paper-plane mr-2"></i>Submit Assignment</button></div></div> : <EmptyState text="Select an assessment to begin." />}</div></div></div>;
+}
+
 function TeacherDashboard({ activeNav }) {
   const { data, updateCollection } = React.useContext(DataContext); const { session } = React.useContext(SessionContext); const teacher = data.teachers.find(t => t.id === session.linkedId) || data.teachers[0]; const teacherStudents = data.students.filter(st => safeArray(teacher?.assigned_class_ids).includes(st.class_id)); const teacherAttendance = data.attendance.filter(a => a.teacher_id === teacher?.id); const teacherGrades = data.grades.filter(g => g.teacher_id === teacher?.id); const [profile, setProfile] = React.useState(teacher || {}); React.useEffect(() => setProfile(teacher || {}), [teacher?.id]); if (!teacher) return <EmptyState text="No teacher record found." />;
   if (activeNav === 'dashboard') return <div className="space-y-6"><SectionHeader title={`Welcome, ${teacher.full_name}`} subtitle="Teacher dashboard overview, assigned classes, recent attendance, recent grades, and photo management." actions={<RoleStatusDot online={data.presence.teacher?.online} label="Teacher Status" />} /><div className="grid-fit"><StatCard label="Assigned Class Students" value={teacherStudents.length} icon="users" accent="blue" /><StatCard label="Recent Attendance Entries" value={teacherAttendance.length} icon="calendar-check" accent="emerald" /><StatCard label="Recent Grade Entries" value={teacherGrades.length} icon="star" accent="amber" /></div><div className="card p-5"><div className="grid md:grid-cols-2 gap-6"><div><h3 className="font-bold text-lg mb-3">Teacher Details</h3><div className="space-y-2 text-sm"><p><b>Full Name:</b> {teacher.full_name}</p><p><b>Teacher Staff Number:</b> {teacher.staff_number}</p><p><b>EMIS Code:</b> {teacher.emis_code}</p><p><b>Assigned Classes:</b> {safeArray(teacher.assigned_class_ids).map(id => fullClassName(data.classes.find(c => c.id === id))).join(', ')}</p><p><b>Primary Specialty:</b> {teacher.primary_specialty}</p></div></div><div><ImageInput label="Upload or Update Your Photo" storageFolder="teachers" value={profile.photo_url} onChange={v => setProfile({ ...profile, photo_url: v })} /><button className="btn btn-primary mt-4" onClick={() => updateCollection('teachers', items => items.map(t => t.id === teacher.id ? { ...t, photo_url: profile.photo_url } : t))}>Save Photo</button></div></div></div></div>;
   if (activeNav === 'students') return <TeacherStudentView teacher={teacher} />;
   if (activeNav === 'attendance') return <TeacherAttendance teacher={teacher} />;
   if (activeNav === 'grades') return <TeacherGrades teacher={teacher} />;
+  if (activeNav === 'assessments') return <TeacherAssessmentManagement teacher={teacher} />;
   if (activeNav === 'salary') return <TeacherSalaryView teacher={teacher} />;
   if (activeNav === 'timetable') return <TimetableManagement teacherId={teacher.id} />;
   if (activeNav === 'chat') return <ChatManagement role="teacher" linkedId={teacher.id} />;
@@ -4562,6 +4771,7 @@ function StudentDashboard({ activeNav }) {
   if (activeNav === 'grades') return <StudentGrades student={student} />;
   if (activeNav === 'attendance') return <StudentAttendance student={student} />;
   if (activeNav === 'fees') return <StudentFees student={student} />;
+  if (activeNav === 'assessments') return <StudentSubmissionModule student={student} />;
   if (activeNav === 'timetable') return <StudentTimetable student={student} />;
   if (activeNav === 'chat') return <ChatManagement role="student" linkedId={student.id} />;
   return null;
